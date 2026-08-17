@@ -1,0 +1,52 @@
+{
+  "crops": {
+    "coffee": {
+      "name":"Cà phê",
+      "stages":[
+        {"id":"postharvest","name":"Sau thu hoạch","goals":["phục hồi cây","vệ sinh vườn","đánh giá bộ lá và rễ"],"monitor":["sâu bệnh còn tồn lưu","cành khô","rễ yếu"],"nutrition":["cân đối hữu cơ và khoáng theo đất, năng suất và khuyến cáo địa phương"]},
+        {"id":"shoot","name":"Phục hồi – phát triển cành lá","goals":["tạo cành hữu hiệu","duy trì bộ lá"],"monitor":["rệp","sâu ăn lá","nấm lá"],"nutrition":["N, K, trung vi lượng theo kết quả đất/lá và tải cây"]},
+        {"id":"floral","name":"Phân hóa mầm hoa","goals":["nuôi cành hữu hiệu","chuẩn bị ra hoa"],"monitor":["sức cây","ẩm độ đất","sâu bệnh"],"nutrition":["cân đối, tránh dư đạm khi cây cần phân hóa mầm"]},
+        {"id":"flower","name":"Tưới – ra hoa","goals":["đồng đều ra hoa","hạn chế rụng hoa"],"monitor":["thời tiết nóng/khô","mưa trái mùa","bệnh hoa"],"nutrition":["theo giai đoạn và phân tích"]},
+        {"id":"fruitset","name":"Đậu quả","goals":["giữ quả non","ổn định bộ lá"],"monitor":["sâu chích hút","bệnh quả/lá"],"nutrition":["cân đối K và các nguyên tố cần thiết theo chẩn đoán"]},
+        {"id":"fruit","name":"Nuôi quả","goals":["nuôi quả","duy trì tán lá"],"monitor":["gỉ sắt","thán thư","rệp sáp","sâu chích hút"],"nutrition":["ưu tiên cân đối K và dinh dưỡng theo sức cây"],"diseaseNotes":["mưa và ẩm kéo dài thường làm tăng áp lực nhiều bệnh nấm"]},
+        {"id":"ripening","name":"Quả phát triển – chín","goals":["đảm bảo chất lượng quả","giảm rụng"],"monitor":["bệnh quả","sâu chích hút"],"nutrition":["tránh bón/phun không cần thiết gần thu hoạch"]},
+        {"id":"preharvest","name":"Chuẩn bị thu hoạch","goals":["an toàn thực phẩm","giảm tồn dư","chuẩn bị thu hái"],"monitor":["thời gian cách ly","đồng ruộng sạch"],"nutrition":["không tự ý tăng phân/thuốc"]}
+      ],
+      "riskTargets":["gỉ sắt","thán thư","nấm hồng","rệp sáp","sâu đục cành","tuyến trùng"]
+    },
+    "pepper": {
+      "name":"Hồ tiêu",
+      "stages":[
+        {"id":"recovery","name":"Sau thu hoạch – phục hồi","goals":["phục hồi dây","quản lý rễ","vệ sinh vườn"],"monitor":["Phytophthora","tuyến trùng","rệp sáp"],"nutrition":["hữu cơ và dinh dưỡng cân đối"]},
+        {"id":"canopy","name":"Phát triển thân – cành","goals":["tán khỏe","cành mang trái"],"monitor":["rệp sáp","sâu bệnh lá"],"nutrition":["theo đất/lá và sức cây"]},
+        {"id":"flower","name":"Ra hoa","goals":["đồng đều ra hoa","hạn chế rụng"],"monitor":["ẩm độ","mưa bất thường","bệnh hoa"],"nutrition":["cân đối, tránh dư đạm"]},
+        {"id":"fruitset","name":"Đậu trái","goals":["giữ trái non","duy trì bộ lá"],"monitor":["rệp sáp","bệnh lá"],"nutrition":["theo sức cây"]},
+        {"id":"fruit","name":"Nuôi trái","goals":["nuôi chùm","duy trì bộ lá"],"monitor":["chết nhanh","thối rễ","rệp sáp","tuyến trùng"],"nutrition":["cân đối K, hữu cơ và trung vi lượng theo chẩn đoán"],"diseaseNotes":["mưa nhiều và thoát nước kém là yếu tố quan trọng với nhóm bệnh rễ/chết nhanh"]},
+        {"id":"preharvest","name":"Trước thu hoạch","goals":["an toàn thực phẩm","giảm tồn dư"],"monitor":["PHI của mọi sản phẩm đã dùng"]},
+        {"id":"harvest","name":"Thu hoạch","goals":["thu hái đúng độ chín","vệ sinh"]},
+        {"id":"post","name":"Sau thu hoạch","goals":["vệ sinh và chuẩn bị vụ sau"]}
+      ],
+      "riskTargets":["chết nhanh Phytophthora","chết chậm","thối rễ","tuyến trùng","rệp sáp","bệnh lá"]
+    },
+    "areca": {
+      "name":"Cau",
+      "stages":[
+        {"id":"seedling","name":"Cây con","goals":["rễ khỏe","ổn định tán"],"monitor":["sâu ăn lá","thối rễ"]},
+        {"id":"juvenile","name":"Kiến thiết cơ bản","goals":["tăng trưởng thân lá","cân đối dinh dưỡng"],"monitor":["sâu bệnh lá","rễ"]},
+        {"id":"mature","name":"Cây trưởng thành","goals":["duy trì tán","nuôi buồng"],"monitor":["sâu bệnh lá","rễ"]},
+        {"id":"fruit","name":"Mang buồng – nuôi trái","goals":["nuôi buồng","giảm rụng"],"monitor":["sâu bệnh theo quan sát thực tế"],"nutrition":["cân đối theo đất, nước và năng suất"]},
+        {"id":"harvest","name":"Thu hoạch","goals":["thu hái đúng thời điểm","an toàn"]}
+      ],
+      "riskTargets":["sâu ăn lá","thối rễ","đốm lá"]
+    }
+  },
+  "rules":[
+    {"when":{"crop":"coffee","stage":"fruit","rain24h":15},"advice":"Mưa/ẩm tăng: ưu tiên kiểm tra tán, lá và quả; không mặc định phun. Đánh giá bệnh trước khi chọn phương án."},
+    {"when":{"crop":"pepper","stage":"fruit","rain24h":20},"advice":"Mưa lớn + nuôi trái: kiểm tra thoát nước, gốc/rễ và dấu hiệu chết nhanh/chết chậm trước khi can thiệp hóa học."}
+  ],
+  "sources":[
+    {"title":"Cục Trồng trọt và Bảo vệ thực vật – Thông tư 28/2026/TT-BNNMT","url":"https://www.ppd.gov.vn/van-ban-chinh-sach/thong-tu-282026tt-bnnmt-ngay-3062026-sua-doi--bo-sung-thong-tu-so-752025tt-bnnmt.html"},
+    {"title":"WASI – Chăm sóc cà phê đầu mùa mưa","url":"https://wasi.org.vn/cham-soc-ca-phe-kinh-doanh-dau-mua-mua/"},
+    {"title":"Khuyến nông – Kỹ thuật bón phân cho cà phê","url":"https://khuyennongvn.gov.vn/khoa-hoc-cong-nghe/khcn-trong-nuoc/ky-thuat-bon-phan-cho-cay-ca-phe-voi-15915.html"}
+  ]
+}
