@@ -15,7 +15,7 @@ const state = {
   token: localStorage.getItem('appToken') || '',
   apiBase: localStorage.getItem('apiBase') || '',
   knowledge: FALLBACK_KNOWLEDGE,
-  backend: 'local',
+  backend: 'local', automation: null,
 };
 
 const $ = (s,root=document)=>root.querySelector(s);
@@ -64,7 +64,7 @@ async function api(path,opts={}){
 }
 
 async function loadKnowledge(){
-  try { state.knowledge=await jsonFetch(appPath('data/knowledge.json')); }
+  try { state.knowledge=await jsonFetch(appPath('knowledge.json')); }
   catch { state.knowledge=FALLBACK_KNOWLEDGE; }
 }
 
@@ -80,6 +80,7 @@ async function loadData(){
 async function boot(){
   await loadKnowledge();
   await loadData();
+  await loadAutomationStatus();
   try{ await registerSW(); }catch{}
   render();
   try{
@@ -96,6 +97,10 @@ async function registerSW(){
   if(!('serviceWorker' in navigator)) return;
   const sw=appPath('sw.js');
   await navigator.serviceWorker.register(sw,{scope:BASE_URL.pathname});
+}
+
+async function loadAutomationStatus(){
+  try{ state.automation=await api('/api/automation/status'); }catch{ state.automation=null; }
 }
 
 function svg(name){
@@ -198,27 +203,84 @@ function render(){
  app.innerHTML=main+(state.tab!=='settings'?nav():'');
 }
 
+
+function plantArt(crop){
+  const c=String(crop);
+  if(c==='coffee') return `<svg class="plant-art coffee-art" viewBox="0 0 120 120" aria-hidden="true">
+    <defs><linearGradient id="cg1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2c9b57"/><stop offset="1" stop-color="#15663a"/></linearGradient></defs>
+    <path d="M58 106V52" stroke="url(#cg1)" stroke-width="7" stroke-linecap="round"/>
+    <path d="M58 68C40 62 26 50 20 35c15-3 29 1 38 12M59 77c18-5 31-16 37-31-16-3-30 1-39 12M58 53C45 44 38 33 37 21c13 1 23 8 27 20M61 57c13-10 22-21 23-34-13 1-23 8-28 20" fill="none" stroke="url(#cg1)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="40" cy="40" r="5" fill="#d86642"/><circle cx="78" cy="47" r="5" fill="#d86642"/><circle cx="49" cy="72" r="4.5" fill="#d86642"/>
+  </svg>`;
+  if(c==='pepper') return `<svg class="plant-art pepper-art" viewBox="0 0 120 120" aria-hidden="true">
+    <defs><linearGradient id="pg1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#41b96d"/><stop offset="1" stop-color="#197746"/></linearGradient></defs>
+    <path d="M60 110C53 92 56 77 61 60c5-17 7-30 2-43" fill="none" stroke="url(#pg1)" stroke-width="7" stroke-linecap="round"/>
+    <path d="M61 67c-18-6-28-18-31-34 13-2 26 5 33 17M61 76c20-8 29-20 31-37-14 0-27 7-34 19M64 47c13-5 21-15 22-28-11 0-20 4-26 13" fill="none" stroke="url(#pg1)" stroke-width="5.5" stroke-linecap="round"/>
+    <path d="M79 76c8 4 12 10 12 17-8 3-15 0-19-7-3-6 0-10 7-10ZM83 92c7 3 10 8 10 14-7 3-13 1-17-5-3-5 0-8 7-9Z" fill="#d2a74d" opacity=".92"/>
+  </svg>`;
+  return `<svg class="plant-art areca-art" viewBox="0 0 120 120" aria-hidden="true">
+    <defs><linearGradient id="ag1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#58b76f"/><stop offset="1" stop-color="#1b7546"/></linearGradient></defs>
+    <path d="M60 110V57" stroke="url(#ag1)" stroke-width="8" stroke-linecap="round"/>
+    <path d="M59 60C42 48 25 41 14 41M61 60c15-11 30-18 45-18M59 55C50 38 47 24 50 12M62 55c7-17 14-28 25-37" fill="none" stroke="url(#ag1)" stroke-width="5.5" stroke-linecap="round"/>
+    <path d="M14 41c12-8 24-9 34-5-7 9-18 13-34 5ZM106 42c-12-8-24-9-34-5 7 9 18 13 34 5ZM50 12c8 7 12 17 11 29-9-5-14-14-11-29ZM87 18c-7 7-10 17-8 27 9-5 12-14 8-27Z" fill="url(#ag1)" opacity=".96"/>
+    <circle cx="80" cy="77" r="5" fill="#e0b85a"/><circle cx="87" cy="84" r="4.5" fill="#e0b85a"/><circle cx="73" cy="86" r="4" fill="#e0b85a"/>
+  </svg>`;
+}
+function plantTone(crop){ return crop==='coffee'?'coffee-tone':crop==='pepper'?'pepper-tone':'areca-tone'; }
+function monitorSnapshot(){
+  const nowMs=Date.now();
+  const stale=state.plants.filter(p=>!p.last_check_at || nowMs-Date.parse(p.last_check_at)>4*86400000).length;
+  const overdue=state.tasks.filter(t=>t.status!=='DONE' && t.scheduled_at && new Date(t.scheduled_at)<new Date()).length;
+  const pending=state.recs.filter(r=>r.status==='PENDING').length;
+  const weatherRisk=Number(state.weather?.current?.relative_humidity_2m||0)>=85 || Number(state.weather?.current?.precipitation||0)>=5;
+  let level='green', label='Đang ổn';
+  if(overdue||stale||pending){level=weatherRisk?'orange':'blue'; label=overdue?'Có việc quá hạn':stale?'Cần cập nhật cây':'Có khuyến cáo chờ duyệt';}
+  if(weatherRisk && !overdue) {level='orange'; label='Thời tiết cần theo dõi';}
+  return {stale,overdue,pending,level,label};
+}
+function plantStatus(p){
+  const last=p.last_check_at?Date.parse(p.last_check_at):0;
+  const stale=!last || Date.now()-last>4*86400000;
+  const hasTask=state.tasks.some(t=>t.plant_id===p.id && t.status!=='DONE' && t.scheduled_at && new Date(t.scheduled_at)<new Date());
+  if(hasTask) return {label:'Quá hạn',tone:'red'};
+  if(stale) return {label:'Cần cập nhật',tone:'orange'};
+  return {label:'Đang theo dõi',tone:'green'};
+}
+
 function homeView(){
  const pending=state.recs.filter(x=>x.status==='PENDING').length;
  const today=state.tasks.filter(x=>x.scheduled_at?.slice(0,10)===new Date().toISOString().slice(0,10)&&x.status!=='DONE').length;
  const totalPlants=state.plants.reduce((a,p)=>a+(Number(p.count)||0),0);
+ const mon=monitorSnapshot();
  return `<div class="grid grid-3">
    <div class="card stat"><div class="stat-k">Loại cây</div><div class="stat-v">${state.plants.length}</div><div class="stat-s">đang quản lý</div></div>
    <div class="card stat"><div class="stat-k">Tổng cây</div><div class="stat-v">${totalPlants.toLocaleString('vi-VN')}</div><div class="stat-s">cây</div></div>
    <div class="card stat"><div class="stat-k">Hôm nay</div><div class="stat-v">${today}</div><div class="stat-s">việc cần làm</div></div>
  </div>
  ${weatherCard()}
+ <div class="monitor-bar ${mon.level}">
+   <div class="monitor-icon">${mon.level==='green'?'✓':mon.level==='orange'?'!':'•'}</div>
+   <div class="monitor-copy"><b>AI đang theo dõi</b><span>${esc(mon.label)} · ${state.plants.length} loại cây · ${mon.stale} cây cần cập nhật · ${mon.pending} khuyến cáo</span></div>
+   <button class="mini-link" data-action="quick-advice">Xem</button>
+ </div>
  <div class="section"><div class="card hero"><div class="row"><div><span class="tag blue">AI NÔNG VỤ</span><div class="hero-title" style="margin-top:8px">Tư vấn đúng giai đoạn</div><div class="note" style="margin-top:4px">Gộp mùa vụ, thời tiết, quan sát và lịch sử để đề xuất. Mày duyệt trước khi vào lịch.</div></div><button class="btn primary" data-action="quick-advice">Tư vấn</button></div></div></div>
  <div class="section"><div class="section-head"><div class="section-title">Cây đang quản lý</div><button class="section-link" data-tab="plant">Xem tất cả</button></div>${plantCards(4)}</div>
  <div class="section"><div class="section-head"><div class="section-title">Khuyến cáo chờ duyệt</div><span class="tag ${pending?'orange':'green'}">${pending}</span></div>${pending?recCards(3):`<div class="card empty">Chưa có khuyến cáo cần duyệt.</div>`}</div>`;
 }
 function plantCards(n){
  const a=state.plants.slice(0,n); if(!a.length)return `<div class="card empty">Chưa có cây. Bấm ＋ để thêm.</div>`;
- return `<div class="list">${a.map(p=>`<div class="item"><div class="row"><div><div class="item-title">${esc(p.name||cropName(p.crop))}</div><div class="item-meta">${Number(p.count||0).toLocaleString('vi-VN')} cây • ${esc(p.area||0)} ha • ${esc(stageName(p.crop,p.stage))}</div></div><button class="btn secondary" data-action="consult" data-id="${esc(p.id)}">Tư vấn</button></div></div>`).join('')}</div>`;
+ return `<div class="plant-grid">${a.map(p=>{const st=plantStatus(p);return `<div class="plant-card ${plantTone(p.crop)}">
+   <div class="plant-art-wrap">${plantArt(p.crop)}</div>
+   <div class="plant-card-body">
+     <div class="row"><div><div class="item-title">${esc(p.name||cropName(p.crop))}</div><div class="item-meta">${Number(p.count||0).toLocaleString('vi-VN')} cây • ${esc(p.area||0)} ha</div></div><span class="tag ${st.tone}">${st.label}</span></div>
+     <div class="plant-stage">${esc(stageName(p.crop,p.stage))}</div>
+     <div class="actions"><button class="btn secondary" data-action="consult" data-id="${esc(p.id)}">Tư vấn</button><button class="btn ghost" data-action="update-plant" data-id="${esc(p.id)}">Cập nhật</button></div>
+   </div>
+ </div>`}).join('')}</div>`;
 }
 function plantsView(){
  return `<div class="section"><div class="section-head"><div class="section-title">Danh sách cây</div><div class="muted small">GPS tự lấy</div></div>${plantCards(999)}</div>
- <div class="section"><div class="card"><div class="section-title">Thêm cây</div><div class="note" style="margin-top:4px">Loại cây, số cây, diện tích và giai đoạn. Vị trí lấy tự động khi lưu.</div><div class="actions"><button class="btn primary" data-action="add-plant">＋ Thêm</button></div></div></div>`;
+ <div class="section"><div class="card add-plant-cta"><div class="section-title">Thêm loại cây</div><div class="note" style="margin-top:4px">Chọn cây, nhập số lượng + diện tích. Vị trí tự gắn khi lưu.</div><div class="actions"><button class="btn primary" data-action="add-plant">＋ Thêm cây</button></div></div></div>`;
 }
 function aiView(){
  return `<div class="section"><div class="card"><div class="section-title">Chọn cây để tư vấn</div><div class="note" style="margin-top:4px">AI sẽ lấy thời tiết theo GPS và kết hợp giai đoạn, lịch sử, vật tư đã đối chiếu.</div><div class="list" style="margin-top:10px">${state.plants.map(p=>`<div class="plant-chip"><span class="plant-dot"></span><div style="flex:1"><div class="item-title">${esc(p.name||cropName(p.crop))}</div><div class="item-meta">${esc(stageName(p.crop,p.stage))} • ${p.count} cây • ${p.area} ha</div></div><button class="btn primary" data-action="consult" data-id="${esc(p.id)}">Tư vấn</button></div>`).join('')||`<div class="empty">Thêm cây trước để bắt đầu.</div>`}</div></div></div>
@@ -233,7 +295,8 @@ function calendarView(){
  return `<div class="list">${a.map(t=>`<div class="item"><div class="row"><div><div class="item-title">${esc(t.title||t.kind)}</div><div class="item-meta">${new Date(t.scheduled_at||Date.now()).toLocaleString('vi-VN',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</div></div><span class="tag ${t.status==='DONE'?'green':t.status==='POSTPONED'?'orange':'blue'}">${esc(t.status)}</span></div><div class="actions">${t.status!=='DONE'?`<button class="btn success" data-action="done-task" data-id="${esc(t.id)}">Đã làm</button><button class="btn secondary" data-action="postpone-task" data-id="${esc(t.id)}">Hoãn</button>`:''}</div></div>`).join('')}</div>`;
 }
 function settingsView(){
- return `<div class="section"><div class="card"><div class="section-title">Kết nối AI</div><div class="note" style="margin-top:4px">Để trống nếu API cùng domain. Không đặt secret OpenAI trong frontend.</div><div class="form" style="margin-top:10px"><input id="api-base" class="field" placeholder="https://ten-app.pages.dev" value="${esc(state.apiBase)}"><input id="app-token" class="field" type="password" placeholder="APP_TOKEN" value="${esc(state.token)}"><div class="actions"><button class="btn primary" data-action="save-token">Lưu</button><button class="btn secondary" data-action="test-ai">Kiểm tra</button></div></div></div></div>
+ return `<div class="section"><div class="card"><div class="section-title">Theo dõi 24/7</div><div class="note" style="margin-top:4px">Worker sẽ kiểm tra thời tiết mỗi giờ, nhắc việc/cập nhật cây và chạy tổng hợp AI hằng ngày. Telegram được gửi từ secret server-side.</div><div class="status-line" style="margin-top:12px"><span class="status-dot ${state.automation?.enabled?'on':'off'}"></span><span>${state.automation?.enabled?'Đã kết nối automation':'Chưa kết nối automation'}</span><span class="muted">${state.automation?.telegram?'Telegram OK':'Telegram chưa nối'}</span></div><div class="actions"><button class="btn primary" data-action="run-automation">▶ Chạy kiểm tra ngay</button><button class="btn secondary" data-action="test-telegram">Gửi tin thử</button></div></div></div>
+ <div class="section"><div class="card"><div class="section-title">Kết nối AI</div><div class="note" style="margin-top:4px">Để trống nếu API cùng domain. Không đặt secret OpenAI trong frontend.</div><div class="form" style="margin-top:10px"><input id="api-base" class="field" placeholder="https://ten-app.pages.dev" value="${esc(state.apiBase)}"><input id="app-token" class="field" type="password" placeholder="APP_TOKEN" value="${esc(state.token)}"><div class="actions"><button class="btn primary" data-action="save-token">Lưu</button><button class="btn secondary" data-action="test-ai">Kiểm tra</button></div></div></div></div>
  <div class="section"><div class="card"><div class="section-title">Vật tư đã đối chiếu</div><div class="note" style="margin-top:4px">Chỉ vật tư đã đối chiếu nhãn mới được AI dùng để đề xuất liều/PHI cụ thể.</div><div class="actions"><button class="btn primary" data-action="add-inventory">＋ Thêm vật tư</button></div>${inventoryList()}</div></div>
  <div class="section"><div class="card"><div class="section-title">Dữ liệu</div><div class="actions"><button class="btn secondary" data-action="seed">Dữ liệu mẫu</button><button class="btn secondary" data-action="export">Xuất JSON</button><button class="btn danger" data-action="clear">Xóa dữ liệu máy</button></div></div></div>`;
 }
@@ -310,14 +373,28 @@ async function saveChanges(){
 async function handleAction(action,ident){
  const r=state.recs.find(x=>x.id===ident);
  if(r){
-  if(action==='approve-rec'){r.status='APPROVED';state.tasks.unshift({id:id(),plant_id:r.plant_id,rec_id:r.id,kind:'RECOMMENDATION',title:r.title,scheduled_at:new Date(Date.now()+86400000).toISOString(),status:'PLANNED',notes:r.body,created_at:now()});await saveChanges();render();toast('Đã duyệt và đưa vào lịch','success');}
+  if(action==='approve-rec'){r.status='APPROVED'; let meta={}; try{meta=JSON.parse(r.payload||'{}')}catch{}; const steps=Array.isArray(meta.nextSteps)&&meta.nextSteps.length?meta.nextSteps:[{daysFromNow:1,title:r.title,kind:'FOLLOW_UP',notes:r.body}]; for(const step of steps.slice(0,8)){const days=Math.max(0,Number(step.daysFromNow)||0); state.tasks.unshift({id:id(),plant_id:r.plant_id,rec_id:r.id,kind:step.kind||'FOLLOW_UP',title:step.title||r.title,scheduled_at:new Date(Date.now()+days*86400000).toISOString(),status:'PLANNED',notes:step.notes||r.body,created_at:now(),meta:JSON.stringify(step)});} await saveChanges();render();toast(`Đã duyệt và tạo ${steps.slice(0,8).length} mốc lịch`,'success');}
   else if(action==='postpone-rec'){r.status='POSTPONED';await saveChanges();render();toast('Đã hoãn');}
   else if(action==='reject-rec'){r.status='REJECTED';await saveChanges();render();toast('Đã từ chối');}
  }
  const t=state.tasks.find(x=>x.id===ident);
- if(t){if(action==='done-task')t.status='DONE';else if(action==='postpone-task')t.status='POSTPONED';await saveChanges();render();toast(t.status==='DONE'?'Đã ghi nhận hoàn thành':'Đã hoãn');}
+ if(t){if(action==='done-task'){t.status='DONE'; t.completed_at=now();}else if(action==='postpone-task'){t.status='POSTPONED';} await saveChanges(); render(); toast(t.status==='DONE'?'Đã ghi nhận hoàn thành':'Đã hoãn');}
 }
-function seed(){const t=now();state.plants=[{id:id(),crop:'coffee',name:'Cà phê',count:1500,area:1.2,stage:'fruit',season:'2026/2027',lat:12.67,lon:108.04,created_at:t,updated_at:t},{id:id(),crop:'pepper',name:'Hồ tiêu',count:800,area:.6,stage:'fruit',season:'2026/2027',lat:12.67,lon:108.04,created_at:t,updated_at:t},{id:id(),crop:'areca',name:'Cau',count:300,area:.3,stage:'mature',season:'2026/2027',lat:12.67,lon:108.04,created_at:t,updated_at:t}];state.recs=[];state.tasks=[];persistLocal();}
+function seed(){const t=now();state.plants=[{id:id(),crop:'coffee',name:'Cà phê',count:1500,area:1.2,stage:'fruit',season:'2026/2027',lat:12.67,lon:108.04,last_check_at:new Date(Date.now()-2*86400000).toISOString(),created_at:t,updated_at:t},{id:id(),crop:'pepper',name:'Hồ tiêu',count:800,area:.6,stage:'fruit',season:'2026/2027',lat:12.67,lon:108.04,last_check_at:new Date(Date.now()-5*86400000).toISOString(),created_at:t,updated_at:t},{id:id(),crop:'areca',name:'Cau',count:300,area:.3,stage:'mature',season:'2026/2027',lat:12.67,lon:108.04,last_check_at:t,created_at:t,updated_at:t}];state.recs=[];state.tasks=[];persistLocal();}
+function updatePlant(plantId){
+ const p=state.plants.find(x=>x.id===plantId); if(!p)return;
+ const e=modal(`<h2>Cập nhật ${esc(p.name||cropName(p.crop))}</h2><div class="muted small">${esc(stageName(p.crop,p.stage))}</div>
+ <div class="form" style="margin-top:14px"><label class="label">Tình trạng hiện tại</label><textarea id="upd-note" class="field textarea" placeholder="Ví dụ: lá xanh, có 3 cây vàng lá, sâu thấy ít..."></textarea>
+ <label class="label">Ảnh hiện trường</label><input id="upd-img" class="field" type="file" accept="image/*">
+ <div class="actions"><button class="btn secondary" data-close="1">Hủy</button><button class="btn primary" data-save-update="1">Lưu cập nhật</button></div></div>`);
+ e.addEventListener('click',async x=>{
+   if(x.target.closest('[data-close]')) return e.remove();
+   if(!x.target.closest('[data-save-update]')) return;
+   p.last_check_at=now(); p.last_observation=$('#upd-note',e).value.trim(); p.updated_at=now();
+   await saveChanges(); e.remove(); render(); toast('Đã cập nhật trạng thái cây','success');
+ });
+}
+
 function inventoryModal(){
  const e=modal(`<h2>Thêm vật tư</h2><div class="form" style="margin-top:14px"><input id="i-name" class="field" placeholder="Tên thương mại"><input id="i-active" class="field" placeholder="Hoạt chất"><input id="i-crop" class="field" placeholder="Cây đăng ký"><input id="i-targets" class="field" placeholder="Đối tượng"><input id="i-dose" class="field" placeholder="Liều theo nhãn"><input id="i-phi" class="field" placeholder="PHI"><label><input id="i-verified" type="checkbox"> Tôi đã đối chiếu nhãn</label><div class="actions"><button class="btn secondary" data-close="1">Huỷ</button><button class="btn primary" data-save-inv="1">Lưu</button></div></div>`);
  e.addEventListener('click',async x=>{if(x.target.closest('[data-close]'))return e.remove();if(!x.target.closest('[data-save-inv]'))return;const i={id:id(),name:$('#i-name',e).value,active:$('#i-active',e).value,crop:$('#i-crop',e).value,targets:$('#i-targets',e).value,dose:$('#i-dose',e).value,phi:$('#i-phi',e).value,label_verified:$('#i-verified',e).checked?1:0,stock:0,unit:'đv',created_at:now()};state.inventory.unshift(i);await saveChanges();e.remove();render();toast('Đã thêm vật tư','success');});
@@ -332,9 +409,12 @@ $('#app').addEventListener('click',async e=>{
  else if(action==='quick-advice'){state.tab='ai';location.hash='ai';render();}
  else if(action==='refresh-weather') refreshWeather();
  else if(action==='consult')consult(a.dataset.id);
+ else if(action==='update-plant')updatePlant(a.dataset.id);
  else if(['approve-rec','postpone-rec','reject-rec','done-task','postpone-task'].includes(action))handleAction(action,a.dataset.id);
  else if(action==='save-token'){state.apiBase=$('#api-base').value.trim().replace(/\/$/,'');state.token=$('#app-token').value.trim();localStorage.setItem('apiBase',state.apiBase);localStorage.setItem('appToken',state.token);toast('Đã lưu kết nối');}
  else if(action==='test-ai'){try{const h=await api('/api/health');toast(`Backend OK • AI: ${h.ai?'sẵn sàng':'chưa cấu hình'} • DB: ${h.db?'OK':'chưa nối'}`,'success');}catch(err){toast(`Chưa kết nối backend: ${err.message}`,'error');}}
+ else if(action==='run-automation'){try{toast('Đang chạy kiểm tra tự động…'); const r=await api('/api/automation/run',{method:'POST',body:JSON.stringify({})}); state.automation=r.status||state.automation; await loadData(); render(); toast(`Đã kiểm tra: ${r.created||0} khuyến cáo, ${r.notifications||0} thông báo`,'success');}catch(err){toast(`Automation chưa sẵn sàng: ${err.message}`,'error');}}
+ else if(action==='test-telegram'){try{const r=await api('/api/notify/test',{method:'POST',body:JSON.stringify({})}); toast(r.ok?'Telegram đã gửi tin thử':'Telegram chưa cấu hình', r.ok?'success':'error');}catch(err){toast(`Telegram lỗi: ${err.message}`,'error');}}
  else if(action==='export'){const d={plants:state.plants,inventory:state.inventory,recs:state.recs,tasks:state.tasks};const u=URL.createObjectURL(new Blob([JSON.stringify(d,null,2)],{type:'application/json'}));const x=document.createElement('a');x.href=u;x.download='nong-vu-ai-backup.json';x.click();URL.revokeObjectURL(u);}
  else if(action==='seed'){seed();render();toast('Đã nạp dữ liệu mẫu','success');}
  else if(action==='clear'){if(confirm('Xoá dữ liệu local?')){state.plants=[];state.recs=[];state.tasks=[];state.inventory=[];persistLocal();render();toast('Đã xoá dữ liệu local');}}
@@ -345,5 +425,16 @@ $('#app').addEventListener('click',async e=>{
 window.addEventListener('hashchange',()=>{state.tab=location.hash.replace(/^#/,'')||'home';render();});
 window.addEventListener('error',e=>{if(e.error)console.error(e.error);});
 window.addEventListener('unhandledrejection',e=>{console.error(e.reason);});
+function autoMonitor(){
+  try{
+    const mon=monitorSnapshot();
+    const key=`nv_mon_${new Date().toISOString().slice(0,10)}`;
+    if(mon.stale>0 && !localStorage.getItem(key)){
+      localStorage.setItem(key,'1');
+      toast(`Có ${mon.stale} cây đã quá 4 ngày chưa cập nhật`,'info');
+    }
+  }catch{}
+}
+setInterval(autoMonitor,15*60*1000);
 
 boot().catch(err=>{localLoad();render();toast('Khởi động ở chế độ offline','info');console.error(err);});

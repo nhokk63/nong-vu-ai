@@ -1,1 +1,5 @@
-{"name":"nong-vu-ai","private":true,"scripts":{"dev":"wrangler pages dev .","deploy":"wrangler pages deploy ."},"devDependencies":{"wrangler":"latest"}}
+{
+  "name":"nong-vu-ai",
+  "private":true,
+  "scripts":{"check":"node --check app.js"}
+}

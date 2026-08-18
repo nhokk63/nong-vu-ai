@@ -1,32 +1,58 @@
-# Nông Vụ AI v13 — bản upload bằng điện thoại
+# Nông Vụ AI v17 — theo dõi tự động 24/7
 
-Bản này được làm phẳng để **GitHub trên điện thoại chỉ cần chọn file**, không phải upload thư mục con.
+Bản này giữ giao diện iOS 18 + GitHub Pages/local-first, đồng thời thêm **Cloudflare Worker + D1 + Cron + OpenAI + Telegram** để hệ thống tự theo dõi khi mày không mở app.
 
-## Trong repo chỉ cần các file này
+## Có gì mới
 
-- index.html
-- app.js
-- styles.css
-- manifest.json
-- sw.js
-- knowledge.json
-- icon-180.png
-- icon-192.png
-- icon-512.png
-- schema.sql
-- _worker.js
-- wrangler.toml
-- package.json
-- .gitignore
+- Kiểm tra thời tiết theo GPS của từng cây mỗi giờ.
+- Cảnh báo mưa/ẩm cao và nhắc công việc sắp đến.
+- Nhắc cây quá 4 ngày chưa cập nhật.
+- Tổng hợp AI hằng ngày; AI tạo khuyến cáo ở trạng thái `PENDING`, không tự quyết định phun.
+- Khi mày Duyệt một khuyến cáo, `nextSteps` được đưa thành nhiều mốc lịch theo số ngày mà AI đề xuất.
+- Sau khi ghi nhận Đã làm, lịch sử được lưu để lần tư vấn sau AI đọc lại.
+- Telegram gửi cảnh báo/tổng hợp; token không nằm trong frontend.
+- CSDL D1 lưu cây, lịch, quan sát, vật tư, khuyến cáo, thời tiết và nhật ký thông báo.
+- Không cần VPS, không cần điện thoại chạy 24/7.
 
-## GitHub Pages
+## Hai chế độ
 
-Có thể chạy frontend ngay bằng GitHub Pages ở chế độ local-first. Không cần VPS/Termux.
+### GitHub Pages
+Dùng để kiểm tra giao diện, GPS, weather và local-first. `/api/*` không chạy trên GitHub Pages.
 
-Settings → Pages → Source → Deploy from a branch → main → /(root).
+### Cloudflare Worker (khuyến nghị để chạy tự động)
+Worker phục vụ luôn static assets và API bằng `_worker.js`; cấu hình Cron nằm trong `wrangler.toml`. Cloudflare Workers Cron Triggers gọi `scheduled()` theo lịch; cron dùng UTC. Xem tài liệu chính thức: https://developers.cloudflare.com/workers/configuration/cron-triggers/
 
-## Cloudflare
+## Deploy Worker từ GitHub
 
-`_worker.js` là bản worker gộp để sau này chạy API serverless mà không cần thư mục `functions/`. Gắn D1 binding tên `DB` và secret `OPENAI_API_KEY` khi muốn bật AI cloud.
+1. Tạo D1 database tên `nong-vu-ai-db`.
+2. Chạy toàn bộ `schema.sql` trong D1 Console.
+3. Lấy `database_id` và thay `REPLACE_WITH_D1_DATABASE_ID` trong `wrangler.toml` (hoặc bind D1 từ dashboard).
+4. Kết nối repo GitHub vào Cloudflare Workers Builds/Git integration.
+5. Chọn production branch `main`.
+6. Dùng Wrangler config này để Worker build với `main = "_worker.js"` và assets ở `.`.
+7. Tạo Secrets:
+   - `APP_TOKEN` — chuỗi bí mật để app gọi API.
+   - `OPENAI_API_KEY` — API key server-side.
+   - `TELEGRAM_BOT_TOKEN` — token bot Telegram.
+   - `TELEGRAM_CHAT_ID` — chat id nhận thông báo.
+8. Sau deploy, mở URL `*.workers.dev` của Worker. Trong app, có thể để API Base trống nếu frontend được phục vụ cùng Worker.
 
-Frontend vẫn chạy local nếu backend chưa cấu hình.
+## Cron
+
+- `0 * * * *` — mỗi giờ: weather, cảnh báo, việc sắp đến, cây cần cập nhật.
+- `0 22 * * *` — 05:00 giờ Việt Nam: tổng hợp AI + tạo khuyến cáo PENDING + Telegram digest.
+
+Cloudflare Cron dùng UTC.
+
+## AI và thuốc
+
+Worker gọi OpenAI Responses API. AI được yêu cầu chỉ đưa sản phẩm/liều/PHI cụ thể khi `inventory.label_verified=1` và dữ liệu phù hợp với cây/đối tượng. Nếu thiếu dữ liệu, AI phải nói rõ chưa đủ dữ liệu.
+
+Không để `OPENAI_API_KEY` hoặc Telegram token trong `app.js`, GitHub Pages hay repo công khai.
+
+## Nguồn kiến thức khởi đầu
+
+- Cục Trồng trọt và Bảo vệ thực vật: https://www.ppd.gov.vn/
+- WASI: https://wasi.org.vn/
+- Khuyến nông Việt Nam: https://khuyennongvn.gov.vn/
+- Open-Meteo: https://open-meteo.com/en/docs

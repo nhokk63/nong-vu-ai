@@ -1,85 +1,186 @@
-const json = (x, status=200) => new Response(JSON.stringify(x), {
-  status,
-  headers: {'content-type':'application/json; charset=utf-8','cache-control':'no-store','access-control-allow-origin':'*'}
-});
-const guard = (request, env) => {
-  const expected = env.APP_TOKEN;
-  if (!expected) return null;
-  const got = request.headers.get('X-App-Token') || '';
-  return got === expected ? null : json({error:'Unauthorized'},401);
-};
+const json = (data, status=200, extra={}) => new Response(JSON.stringify(data), {status, headers:{'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store', ...extra}});
+const text = (data, status=200, extra={}) => new Response(data,{status,headers:{'Content-Type':'text/plain; charset=utf-8',...extra}});
 
-async function aiAdvice(request, env) {
-  const g=guard(request,env); if(g) return g;
-  if(!env.OPENAI_API_KEY) return json({error:'OPENAI_API_KEY chưa cấu hình'},503);
-  const b=await request.json();
-  const p=b.plant||{};
-  const crop=b.knowledge?.crops?.[p.crop];
-  const stage=crop?.stages?.find(s=>s.id===p.stage);
-  const context={plant:p,stage,weather:b.weather,observation:b.observation||'',inventory:b.inventory||[],history:b.history||{},sources:b.knowledge?.sources||[]};
-  const system=`Bạn là AI trợ lý nông vụ cho cà phê, hồ tiêu và cau ở Việt Nam. Ưu tiên IPM, kiểm tra thực tế và biện pháp canh tác. Chỉ khuyến cáo thuốc/sản phẩm cụ thể khi inventory có cây đăng ký, đối tượng, nhãn đã đối chiếu (label_verified=1) và có dose/phi. Nếu thiếu dữ liệu, không bịa. Tách rõ đánh giá, nguy cơ, kiểm tra, không hóa chất, hóa học, thời tiết, cảnh báo, độ tin cậy và nguồn. Ảnh chỉ cho nhận định xác suất.`;
-  const user=`Hãy tư vấn cho dữ liệu sau. Trả JSON thuần với các key: title,summary,assessment,risks,checks,nonChemical,chemical,weatherWindow,precautions,confidence,sources. chemical là mảng; mỗi item gồm product,active,why,dose,phi,evidence. Nếu không đủ dữ liệu, chemical=[] và nói rõ trong summary. Không tự invent liều.\n\n${JSON.stringify(context)}`;
-  let content=[{type:'input_text',text:user}];
-  if(typeof b.image==='string'&&b.image.startsWith('data:image/')) content.push({type:'input_image',image_url:b.image});
-  const payload={model:env.OPENAI_MODEL||'gpt-5.6',input:[{role:'system',content:[{type:'input_text',text:system}]},{role:'user',content}],temperature:0.2};
-  const r=await fetch('https://api.openai.com/v1/responses',{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${env.OPENAI_API_KEY}`},body:JSON.stringify(payload)});
-  const d=await r.json(); if(!r.ok) return json({error:d?.error?.message||'OpenAI error'},502);
-  const text=d.output_text||d.output?.flatMap(x=>x.content||[]).map(x=>x.text||'').join('')||'';
-  let out; try{out=JSON.parse(text)}catch{out={title:'Khuyến cáo AI',summary:text,assessment:'',risks:[],checks:[],nonChemical:[],chemical:[],weatherWindow:'',precautions:[],confidence:null,sources:[]}};
-  return json({...out,model:env.OPENAI_MODEL||'gpt-5.6'});
+function corsHeaders(origin='*'){
+  return {'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Headers':'Content-Type, X-App-Token, Authorization','Access-Control-Allow-Methods':'GET,POST,OPTIONS'};
+}
+function authOk(request, env){
+  if(!env.APP_TOKEN) return true;
+  const token=request.headers.get('X-App-Token') || request.headers.get('Authorization')?.replace(/^Bearer\s+/i,'');
+  return token && token===env.APP_TOKEN;
+}
+function needAuth(request, env){
+  if(authOk(request, env)) return null;
+  return json({error:'Unauthorized. Add your APP_TOKEN in Settings.'},401);
+}
+async function dbBatch(env, statements){ if(!env.DB) throw new Error('D1 chưa được binding'); return env.DB.batch(statements); }
+function iso(){return new Date().toISOString();}
+function parseJson(x, fallback={}){try{return x?JSON.parse(x):fallback}catch{return fallback}}
+function cropName(c){return ({coffee:'Cà phê',pepper:'Hồ tiêu',areca:'Cau'}[c]||c||'Cây trồng');}
+function stageName(c,s){const m={coffee:{postharvest:'Sau thu hoạch',shoot:'Phục hồi – phát triển cành lá',floral:'Phân hóa mầm hoa',flower:'Ra hoa',fruitset:'Đậu quả',fruit:'Nuôi quả',ripening:'Quả phát triển – chín',preharvest:'Chuẩn bị thu hoạch'},pepper:{recovery:'Sau thu hoạch – phục hồi',canopy:'Phát triển thân – cành',flower:'Ra hoa',fruitset:'Đậu trái',fruit:'Nuôi trái',preharvest:'Trước thu hoạch',harvest:'Thu hoạch',post:'Sau thu hoạch'},areca:{seedling:'Cây con',juvenile:'Kiến thiết cơ bản',mature:'Cây trưởng thành',fruit:'Mang buồng – nuôi trái',harvest:'Thu hoạch'}};return m[c]?.[s]||s||'Chưa chọn';}
+
+async function fetchWeather(lat, lon){
+  const u=`https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}&current=temperature_2m,relative_humidity_2m,precipitation,rain,wind_speed_10m,wind_gusts_10m,weather_code,is_day&hourly=precipitation_probability,precipitation,wind_speed_10m,relative_humidity_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max&forecast_days=5&timezone=auto`;
+  const r=await fetch(u); if(!r.ok) throw new Error(`Weather ${r.status}`); return r.json();
+}
+async function reverseGeocode(lat,lon){
+  try{const u=`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}&localityLanguage=vi`; const r=await fetch(u); if(!r.ok) return ''; const d=await r.json(); return [d.locality,d.city,d.principalSubdivision,d.countryName].filter(Boolean).slice(0,3).join(', ');}catch{return '';}
 }
 
-async function weather(request) {
-  const u=new URL(request.url); const lat=Number(u.searchParams.get('lat')), lon=Number(u.searchParams.get('lon'));
-  if(!Number.isFinite(lat)||!Number.isFinite(lon)) return json({error:'lat/lon required'},400);
-  const url=`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,precipitation,rain,wind_speed_10m,wind_gusts_10m,weather_code,is_day&hourly=temperature_2m,relative_humidity_2m,precipitation_probability,precipitation,wind_speed_10m,wind_gusts_10m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max&forecast_days=5&timezone=auto`;
-  const r=await fetch(url); if(!r.ok) return json({error:'weather provider error'},502); const d=await r.json(); return json({current:d.current,hourly:d.hourly,daily:d.daily,timezone:d.timezone});
+async function rows(env,table){
+  if(!env.DB) return [];
+  const r=await env.DB.prepare(`SELECT * FROM ${table}`).all(); return r.results||[];
+}
+async function readAll(env){
+  if(!env.DB) return {plants:[],inventory:[],recs:[],tasks:[],observations:[]};
+  const [plants,inventory,recs,tasks,observations]=await Promise.all([rows(env,'plants'),rows(env,'inventory'),rows(env,'recommendations'),rows(env,'tasks'),rows(env,'observations')]);
+  return {plants,inventory,recs,tasks,observations};
 }
 
-async function api(request, env) {
-  const url=new URL(request.url); const path=url.pathname;
-  try {
-    if(path==='/api/health') { const g=guard(request,env); if(g)return g; return json({ok:true,time:new Date().toISOString(),ai:!!env.OPENAI_API_KEY,db:!!env.DB}); }
-    if(path==='/api/weather') return await weather(request);
-    if(path==='/api/advice' && request.method==='POST') return await aiAdvice(request,env);
-    const g=guard(request,env); if(g)return g;
-    if(path==='/api/data' && request.method==='GET') {
-      if(!env.DB) return json({plants:[],recs:[],tasks:[],inventory:[]});
-      const [plants,recs,tasks,inventory]=await Promise.all([
-        env.DB.prepare('SELECT * FROM plants ORDER BY created_at DESC').all(),
-        env.DB.prepare('SELECT * FROM recommendations ORDER BY created_at DESC').all(),
-        env.DB.prepare('SELECT * FROM tasks ORDER BY scheduled_at ASC').all(),
-        env.DB.prepare('SELECT * FROM inventory ORDER BY created_at DESC').all()
-      ]);
-      return json({plants:plants.results,recs:recs.results,tasks:tasks.results,inventory:inventory.results});
+function openaiContentText(body){
+  const txt=body?.output?.map?.(x=>x?.content||[]).flat?.().map?.(x=>x?.text||'').filter(Boolean).join('\n') || body?.output_text || '';
+  return txt;
+}
+function extractJson(s){
+  try{return JSON.parse(s)}catch{}
+  const m=s.match(/\{[\s\S]*\}/); if(m){try{return JSON.parse(m[0])}catch{}}
+  return null;
+}
+
+async function callOpenAI(env, system, user, image){
+  if(!env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY chưa được cấu hình');
+  const content=[{type:'input_text',text:user}];
+  if(image && typeof image==='string' && image.startsWith('data:image/')) content.push({type:'input_image',image_url:image});
+  const payload={model:env.OPENAI_MODEL||'gpt-5.6',input:[{role:'system',content:[{type:'input_text',text:system}]},{role:'user',content}]};
+  const r=await fetch('https://api.openai.com/v1/responses',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${env.OPENAI_API_KEY}`},body:JSON.stringify(payload)});
+  const d=await r.json(); if(!r.ok) throw new Error(d.error?.message||`OpenAI ${r.status}`); const out=openaiContentText(d); const parsed=extractJson(out); if(!parsed) throw new Error('AI không trả JSON hợp lệ'); return parsed;
+}
+
+function adviceSystem(){
+  return `Bạn là AI trợ lý nông vụ cho cà phê, hồ tiêu và cau tại Việt Nam. Mục tiêu là quản lý mùa vụ theo trạng thái thực tế, ưu tiên IPM và biện pháp không hóa học trước. Không được tự bịa tên thuốc, hoạt chất, liều hoặc PHI. Chỉ đưa sản phẩm/liều/PHI cụ thể khi inventory có label_verified=1 và thông tin đó phù hợp với cây/đối tượng. Nếu chưa đủ dữ liệu, nói rõ chưa đủ dữ liệu. Không biến lịch phun thành lịch cứng: mỗi xử lý phải có mốc đánh giá lại. Luôn đưa nextSteps để người dùng có thể duyệt thành lịch. Trả JSON thuần với các trường: title, summary, assessment, risks[], checks[], nonChemical[], chemical[], weatherWindow, precautions[], confidence, nextSteps[]. chemical[] có product,active,dose,phi,why và chỉ có khi đủ dữ liệu xác minh. nextSteps[] có daysFromNow,kind,title,notes. Không chẩn đoán chắc chắn khi thiếu ảnh/triệu chứng.`;
+}
+async function generateAdvice(env, body){
+  const p=body.plant||{}; const prompt={plant:{...p,crop_name:cropName(p.crop),stage_name:stageName(p.crop,p.stage)},observation:body.observation||'',weather:body.weather||{},inventory:(body.inventory||[]).filter(x=>Number(x.label_verified)===1),history:body.history||{},knowledge:body.knowledge||{}};
+  return callOpenAI(env,adviceSystem(),`Phân tích trường hợp sau và trả JSON theo schema mô tả. Đây là tư vấn có người duyệt cuối cùng. Dữ liệu: ${JSON.stringify(prompt)}`,body.image);
+}
+
+async function saveRecommendation(env, rec){
+  if(!env.DB) return;
+  await env.DB.prepare(`INSERT OR REPLACE INTO recommendations(id,plant_id,title,body,payload,status,source,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`).bind(rec.id,rec.plant_id,rec.title,rec.body,rec.payload,rec.status,rec.source||'AI CLOUD',rec.created_at||iso(),iso()).run();
+}
+async function notifyTelegram(env, message){
+  if(!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) return {ok:false,reason:'Telegram chưa cấu hình'};
+  const r=await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:env.TELEGRAM_CHAT_ID,text:message,disable_web_page_preview:true})});
+  const d=await r.json(); if(!r.ok || !d.ok) throw new Error(d.description||`Telegram ${r.status}`); return {ok:true};
+}
+async function notifyOnce(env,fingerprint,message){
+  if(!env.DB) return false;
+  const exists=await env.DB.prepare(`SELECT fingerprint FROM notification_log WHERE fingerprint=?`).bind(fingerprint).first();
+  if(exists) return false;
+  const tg=await notifyTelegram(env,message); if(tg.ok) await env.DB.prepare(`INSERT INTO notification_log(fingerprint,sent_at,channel,message) VALUES(?,?,?,?)`).bind(fingerprint,iso(),'telegram',message).run();
+  return tg.ok;
+}
+
+function taskText(t, p){
+  const when=t.scheduled_at?new Date(t.scheduled_at).toLocaleString('vi-VN',{timeZone:'Asia/Ho_Chi_Minh',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'';
+  return `• ${p?.name||cropName(p?.crop)} — ${t.title||t.kind} — ${when}`;
+}
+async function runHourly(env){
+  if(!env.DB) return {created:0,notifications:0,reason:'no-db'};
+  const data=await readAll(env); let notifications=0;
+  const nowMs=Date.now();
+  for(const p of data.plants){
+    if(!p.lat || !p.lon) continue;
+    try{
+      const w=await fetchWeather(p.lat,p.lon);
+      await env.DB.prepare(`INSERT OR REPLACE INTO weather_snapshots(plant_id,captured_at,payload) VALUES(?,?,?)`).bind(p.id,iso(),JSON.stringify(w)).run();
+      const current=w.current||{}; const hourly=w.hourly||{};
+      const prob=Math.max(...(hourly.precipitation_probability||[]).slice(0,6).map(Number),0);
+      const rain=Number(current.precipitation||0); const hum=Number(current.relative_humidity_2m||0);
+      if(prob>=80 || rain>=5){
+        const fp=`weather:${p.id}:${new Date().toISOString().slice(0,13)}`;
+        const msg=`⚠️ NÔNG VỤ AI\n${p.name||cropName(p.crop)} · ${stageName(p.crop,p.stage)}\n\nThời tiết đang bất lợi: xác suất mưa trong vài giờ tới khoảng ${Math.round(prob)}%, mưa hiện tại ${rain.toFixed(1)} mm, độ ẩm ${Math.round(hum)}%.\n\nKiểm tra các việc phun/xử lý sắp làm; không thực hiện chỉ vì lịch cũ nếu thời tiết không phù hợp.`;
+        if(await notifyOnce(env,fp,msg)) notifications++;
+      }
+      const stale=!p.last_check_at || nowMs-Date.parse(p.last_check_at)>4*86400000;
+      if(stale){
+        const fp=`stale:${p.id}:${new Date().toISOString().slice(0,10)}`;
+        const age=p.last_check_at?Math.floor((nowMs-Date.parse(p.last_check_at))/86400000):999;
+        const msg=`📸 CẬP NHẬT CÂY\n${p.name||cropName(p.crop)} · ${stageName(p.crop,p.stage)}\n\nĐã ${age>=999?'lâu ngày':age+' ngày'} chưa cập nhật trạng thái. Hãy mở app, chụp ảnh/ghi chú tình trạng thực tế để AI cập nhật hồ sơ cây.`;
+        if(await notifyOnce(env,fp,msg)) notifications++;
+      }
+    }catch{}
+  }
+  const soon=data.tasks.filter(t=>t.status==='PLANNED'&&t.scheduled_at && new Date(t.scheduled_at).getTime()<=nowMs+6*3600000 && new Date(t.scheduled_at).getTime()>=nowMs-3600000);
+  if(soon.length){
+    const lines=soon.slice(0,10).map(t=>taskText(t,data.plants.find(p=>p.id===t.plant_id))).join('\n');
+    const fp=`tasks:${new Date().toISOString().slice(0,13)}`;
+    if(await notifyOnce(env,fp,`🔔 VIỆC SẮP ĐẾN\n\n${lines}`)) notifications++;
+  }
+  return {created:0,notifications};
+}
+
+async function runDaily(env){
+  if(!env.DB) return {created:0,notifications:0,reason:'no-db'};
+  const data=await readAll(env); let created=0, notifications=0;
+  const plants=[];
+  for(const p of data.plants){
+    if(!p.lat || !p.lon) continue;
+    try{
+      const w=await fetchWeather(p.lat,p.lon);
+      plants.push({plant:p,weather:w,history:{recs:data.recs.filter(r=>r.plant_id===p.id).slice(-8),tasks:data.tasks.filter(t=>t.plant_id===p.id).slice(-8),observations:data.observations.filter(o=>o.plant_id===p.id).slice(-5)}});
+    }catch{plants.push({plant:p,weather:null,history:{recs:[],tasks:[],observations:[]}})}
+  }
+  if(env.OPENAI_API_KEY && plants.length){
+    const prompt={date:new Date().toISOString(),plants,inventory:data.inventory.filter(x=>Number(x.label_verified)===1)};
+    const system=`Bạn là hệ thống điều phối nông vụ hằng ngày. Dựa trên từng cây, giai đoạn, thời tiết, lịch sử và vật tư đã đối chiếu. Không tự kê thuốc chưa xác minh. Trả JSON: {dailySummary:string, alerts:[{plantId,level,title,message}], recommendations:[{plantId,title,summary,risks,checks,nonChemical,chemical,weatherWindow,precautions,confidence,nextSteps}]}. recommendations là khuyến cáo chờ người dùng duyệt, không phải lệnh.`;
+    try{
+      const out=await callOpenAI(env,system,`Tạo đánh giá hằng ngày cho dữ liệu sau: ${JSON.stringify(prompt)}`);
+      for(const a of out.alerts||[]){
+        const fp=`ai-alert:${a.plantId}:${new Date().toISOString().slice(0,10)}:${a.title}`;
+        const p=data.plants.find(x=>x.id===a.plantId); const msg=`${a.level==='red'?'🚨':a.level==='orange'?'⚠️':'🌱'} ${a.title}\n${p?.name||cropName(p?.crop)}\n\n${a.message}`;
+        if(await notifyOnce(env,fp,msg)) notifications++;
+      }
+      for(const a of out.recommendations||[]){
+        const rec={id:crypto.randomUUID(),plant_id:a.plantId,title:a.title||'Khuyến cáo AI hằng ngày',body:a.summary||'',payload:JSON.stringify(a),status:'PENDING',source:'AI DAILY',created_at:iso(),updated_at:iso()};
+        await saveRecommendation(env,rec); created++;
+      }
+      if(out.dailySummary){const fp=`digest:${new Date().toISOString().slice(0,10)}`; if(await notifyOnce(env,fp,`🌱 NÔNG VỤ AI — TỔNG HỢP HÔM NAY\n\n${out.dailySummary}`)) notifications++;}
+    }catch(err){
+      const fp=`ai-error:${new Date().toISOString().slice(0,10)}`; if(await notifyOnce(env,fp,`⚠️ Nông Vụ AI\nAI tự động hôm nay chưa chạy được: ${err.message}`)) notifications++;
     }
-    if(path==='/api/plants' && request.method==='POST') {
-      if(!env.DB) return json({ok:false},503); const p=await request.json();
-      await env.DB.prepare(`INSERT OR REPLACE INTO plants(id,crop,name,count,area,stage,season,lat,lon,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(p.id,p.crop,p.name,p.count||0,p.area||0,p.stage||'',p.season||'',p.lat??null,p.lon??null,p.created_at||new Date().toISOString(),p.updated_at||new Date().toISOString()).run();
-      return json({ok:true});
-    }
-    if(path==='/api/recommendations' && request.method==='POST') {
-      if(!env.DB) return json({ok:false},503); const r=await request.json();
-      await env.DB.prepare(`INSERT OR REPLACE INTO recommendations(id,plant_id,title,body,payload,status,created_at) VALUES(?,?,?,?,?,?,?)`).bind(r.id,r.plant_id,r.title||'',r.body||'',r.payload||'',r.status||'PENDING',r.created_at||new Date().toISOString()).run();
-      return json({ok:true});
-    }
-    if(path==='/api/sync' && request.method==='POST') {
-      if(!env.DB) return json({ok:false,error:'D1 not configured'},503); const body=await request.json(); const tx=[];
-      if(Array.isArray(body.plants))for(const p of body.plants)tx.push(env.DB.prepare(`INSERT OR REPLACE INTO plants(id,crop,name,count,area,stage,season,lat,lon,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(p.id,p.crop,p.name,p.count||0,p.area||0,p.stage||'',p.season||'',p.lat??null,p.lon??null,p.created_at||new Date().toISOString(),p.updated_at||new Date().toISOString()));
-      if(Array.isArray(body.inventory))for(const x of body.inventory)tx.push(env.DB.prepare(`INSERT OR REPLACE INTO inventory(id,name,active,crop,targets,label_verified,dose,phi,stock,unit,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(x.id,x.name,x.active||'',x.crop||'',x.targets||'',x.label_verified?1:0,x.dose||'',x.phi||'',x.stock||0,x.unit||'đv',x.created_at||new Date().toISOString()));
-      if(Array.isArray(body.recs))for(const x of body.recs)tx.push(env.DB.prepare(`INSERT OR REPLACE INTO recommendations(id,plant_id,title,body,payload,status,created_at) VALUES(?,?,?,?,?,?,?)`).bind(x.id,x.plant_id,x.title||'',x.body||'',x.payload||'',x.status||'PENDING',x.created_at||new Date().toISOString()));
-      if(Array.isArray(body.tasks))for(const x of body.tasks)tx.push(env.DB.prepare(`INSERT OR REPLACE INTO tasks(id,plant_id,rec_id,kind,title,scheduled_at,status,notes,created_at) VALUES(?,?,?,?,?,?,?,?,?)`).bind(x.id,x.plant_id||null,x.rec_id||null,x.kind||'',x.title||'',x.scheduled_at||null,x.status||'PLANNED',x.notes||'',x.created_at||new Date().toISOString()));
-      if(tx.length)await env.DB.batch(tx); return json({ok:true,count:tx.length});
-    }
-    return null;
-  } catch(e) { return json({error:e?.message||'server error'},500); }
+  }
+  return {created,notifications};
+}
+
+async function route(request, env){
+  const url=new URL(request.url);
+  const auth=needAuth(request,env); if(auth) return auth;
+  if(request.method==='OPTIONS') return new Response(null,{status:204,headers:corsHeaders(request.headers.get('Origin')||'*')});
+  if(url.pathname==='/api/health' && request.method==='GET') return json({ok:true,db:!!env.DB,ai:!!env.OPENAI_API_KEY,telegram:!!(env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID),model:env.OPENAI_MODEL||'gpt-5.6'});
+  if(url.pathname==='/api/automation/status' && request.method==='GET') return json({enabled:!!env.DB,telegram:!!(env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID),ai:!!env.OPENAI_API_KEY,crons:['0 * * * *','0 22 * * *']});
+  if(url.pathname==='/api/data' && request.method==='GET') return json(await readAll(env));
+  if(url.pathname==='/api/weather' && request.method==='GET'){const lat=Number(url.searchParams.get('lat')),lon=Number(url.searchParams.get('lon')); if(!Number.isFinite(lat)||!Number.isFinite(lon)) return json({error:'Thiếu lat/lon'},400); const w=await fetchWeather(lat,lon); return json(w);}
+  if(url.pathname==='/api/advice' && request.method==='POST'){const b=await request.json(); try{return json(await generateAdvice(env,b));}catch(e){return json({error:e.message},503)}}
+  if(url.pathname==='/api/recommendations' && request.method==='POST'){const rec=await request.json(); await saveRecommendation(env,rec); return json({ok:true});}
+  if(url.pathname==='/api/plants' && request.method==='POST'){const p=await request.json(); if(!env.DB) return json({ok:false,local:true}); await env.DB.prepare(`INSERT OR REPLACE INTO plants(id,crop,name,count,area,stage,season,lat,lon,last_check_at,last_observation,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(p.id,p.crop,p.name||cropName(p.crop),p.count||0,p.area||0,p.stage||'',p.season||'',p.lat||null,p.lon||null,p.last_check_at||null,p.last_observation||null,p.created_at||iso(),p.updated_at||iso()).run(); return json({ok:true});}
+  if(url.pathname==='/api/sync' && request.method==='POST'){const b=await request.json(); if(!env.DB) return json({ok:false,local:true}); const stm=[]; for(const p of b.plants||[]) stm.push(env.DB.prepare(`INSERT OR REPLACE INTO plants(id,crop,name,count,area,stage,season,lat,lon,last_check_at,last_observation,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(p.id,p.crop,p.name||cropName(p.crop),p.count||0,p.area||0,p.stage||'',p.season||'',p.lat||null,p.lon||null,p.last_check_at||null,p.last_observation||null,p.created_at||iso(),p.updated_at||iso())); for(const i of b.inventory||[]) stm.push(env.DB.prepare(`INSERT OR REPLACE INTO inventory(id,name,active,crop,targets,label_verified,dose,phi,stock,unit,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(i.id,i.name||'',i.active||'',i.crop||'',i.targets||'',i.label_verified?1:0,i.dose||'',i.phi||'',i.stock||0,i.unit||'đv',i.created_at||iso())); for(const r of b.recs||[]) stm.push(env.DB.prepare(`INSERT OR REPLACE INTO recommendations(id,plant_id,title,body,payload,status,source,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`).bind(r.id,r.plant_id,r.title||'',r.body||'',r.payload||'',r.status||'PENDING',r.source||'LOCAL',r.created_at||iso(),iso())); for(const t of b.tasks||[]) stm.push(env.DB.prepare(`INSERT OR REPLACE INTO tasks(id,plant_id,rec_id,kind,title,scheduled_at,status,notes,meta,completed_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(t.id,t.plant_id||null,t.rec_id||null,t.kind||'',t.title||'',t.scheduled_at||null,t.status||'PLANNED',t.notes||'',t.meta||'',t.completed_at||null,t.created_at||iso())); await dbBatch(env,stm); return json({ok:true});}
+  if(url.pathname==='/api/automation/run' && request.method==='POST'){const h=await runHourly(env); const d=await runDaily(env); return json({ok:true,created:(h.created||0)+(d.created||0),notifications:(h.notifications||0)+(d.notifications||0),status:{enabled:!!env.DB,telegram:!!(env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID),ai:!!env.OPENAI_API_KEY}});}
+  if(url.pathname==='/api/notify/test' && request.method==='POST'){const r=await notifyTelegram(env,'🌱 Nông Vụ AI\nTelegram đã kết nối thành công.'); return json(r);}
+  if(url.pathname==='/api/location' && request.method==='GET'){const lat=Number(url.searchParams.get('lat')),lon=Number(url.searchParams.get('lon')); if(!Number.isFinite(lat)||!Number.isFinite(lon)) return json({error:'Thiếu lat/lon'},400); return json({name:await reverseGeocode(lat,lon)});}
+  return null;
 }
 
 export default {
-  async fetch(request, env, ctx) {
-    const apiRes = await api(request,env);
-    if(apiRes) return apiRes;
-    if(env.ASSETS) return env.ASSETS.fetch(request);
-    return new Response('Nông Vụ AI',{status:200,headers:{'content-type':'text/plain; charset=utf-8'}});
+  async fetch(request, env){
+    const url=new URL(request.url);
+    if(url.pathname.startsWith('/api/')){ try{const r=await route(request,env); return r||json({error:'Not found'},404);}catch(e){return json({error:e.message||'Server error'},500);} }
+    return env.ASSETS.fetch(request);
+  },
+  async scheduled(controller, env, ctx){
+    try{
+      if(controller.cron==='0 22 * * *') await runDaily(env);
+      else await runHourly(env);
+    }catch(e){console.error('scheduled error',e);}
   }
 };
