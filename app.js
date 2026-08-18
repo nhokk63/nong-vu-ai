@@ -1,4 +1,5 @@
 const BASE_URL = new URL('./', document.baseURI);
+const DEFAULT_API_BASE = 'https://nong-vu-ai.draculacom1.workers.dev';
 const FALLBACK_KNOWLEDGE = {
   crops: {
     coffee:{name:'Cà phê',stages:[{id:'postharvest',name:'Sau thu hoạch',goals:['Phục hồi cây','vệ sinh vườn'],monitor:['sâu bệnh còn tồn lưu','cành khô']},{id:'shoot',name:'Phục hồi – phát triển cành lá',goals:['Tạo cành hữu hiệu','duy trì bộ lá'],monitor:['rệp','sâu ăn lá','nấm lá']},{id:'floral',name:'Phân hóa mầm hoa',goals:['Chuẩn bị ra hoa'],monitor:['sức cây','ẩm đất']},{id:'flower',name:'Tưới – ra hoa',goals:['Đồng đều ra hoa'],monitor:['mưa trái mùa','bệnh hoa']},{id:'fruitset',name:'Đậu quả',goals:['Giữ quả non'],monitor:['sâu chích hút','bệnh lá/quả']},{id:'fruit',name:'Nuôi quả',goals:['Nuôi quả','duy trì tán lá'],monitor:['gỉ sắt','thán thư','rệp sáp']},{id:'ripening',name:'Quả phát triển – chín',goals:['Chất lượng quả'],monitor:['bệnh quả','sâu chích hút']},{id:'preharvest',name:'Chuẩn bị thu hoạch',goals:['An toàn thực phẩm'],monitor:['PHI','tồn dư']}],riskTargets:['gỉ sắt','thán thư','nấm hồng','rệp sáp','sâu đục cành','tuyến trùng']},
