@@ -64,14 +64,14 @@ async function callChatProvider(env, system, user, image){
     let lastError='';
     for(const model of candidates){
       try{
-        const payload={model,messages,temperature:0.2};
+        const payload={model,messages,temperature:0.15,max_tokens:700};
         const headers={
           'Content-Type':'application/json',
           'Authorization':`Bearer ${openRouterKey}`,
           'HTTP-Referer':env.APP_BASE_URL||'https://nhokk63.github.io/nong-vu-ai/',
           'X-Title':'Nong Vu AI'
         };
-        const r=await fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers,body:JSON.stringify(payload)});
+        const ctrl=new AbortController(); const timer=setTimeout(()=>ctrl.abort('AI timeout'),16000); let r; try{r=await fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers,body:JSON.stringify(payload),signal:ctrl.signal});}finally{clearTimeout(timer)}
         const d=await r.json().catch(()=>({}));
         if(!r.ok){ lastError=d?.error?.message||`OpenRouter ${r.status}`; continue; }
         const out=d?.choices?.[0]?.message?.content||'';
@@ -159,12 +159,10 @@ async function runHourly(env){
       }
     }catch{}
   }
-  const soon=data.tasks.filter(t=>t.status==='PLANNED'&&t.scheduled_at && new Date(t.scheduled_at).getTime()<=nowMs+6*3600000 && new Date(t.scheduled_at).getTime()>=nowMs-3600000);
-  if(soon.length){
-    const lines=soon.slice(0,10).map(t=>taskText(t,data.plants.find(p=>p.id===t.plant_id))).join('\n');
-    const fp=`tasks:${new Date().toISOString().slice(0,13)}`;
-    if(await notifyOnce(env,fp,`🔔 VIỆC SẮP ĐẾN\n\n${lines}`)) notifications++;
-  }
+  const due=data.tasks.filter(t=>t.status==='PLANNED'&&t.scheduled_at && new Date(t.scheduled_at).getTime()<=nowMs+6*3600000 && new Date(t.scheduled_at).getTime()>=nowMs-3600000);
+  for(const t of due){const p=data.plants.find(p=>p.id===t.plant_id);const fp=`task-due:${t.id}:${t.scheduled_at}`;const msg=`🔔 ĐẾN LỊCH THỰC HIỆN\n\n${taskText(t,p)}\n\nHãy mở Nông Vụ AI để xem yêu cầu chi tiết. Sau khi thực hiện, cập nhật tình trạng cây để AI ghi nhớ kết quả.`; if(await notifyOnce(env,fp,msg)) notifications++;}
+  const overdue=data.tasks.filter(t=>t.status==='PLANNED'&&t.scheduled_at&&new Date(t.scheduled_at).getTime()<nowMs-3600000);
+  for(const t of overdue.slice(0,12)){const p=data.plants.find(p=>p.id===t.plant_id);const day=new Date().toISOString().slice(0,10);const fp=`task-overdue:${t.id}:${day}`;const msg=`🚨 VIỆC QUÁ HẠN\n\n${taskText(t,p)}\n\nNếu đã thực hiện, hãy cập nhật trạng thái và tình hình cây. Nếu chưa, kiểm tra thời tiết/điều kiện trước khi xử lý.`; if(await notifyOnce(env,fp,msg)) notifications++;}
   return {created:0,notifications};
 }
 
@@ -210,6 +208,8 @@ async function route(request, env){
   if(url.pathname==='/api/data' && request.method==='GET') return json(await readAll(env));
   if(url.pathname==='/api/weather' && request.method==='GET'){const lat=Number(url.searchParams.get('lat')),lon=Number(url.searchParams.get('lon')); if(!Number.isFinite(lat)||!Number.isFinite(lon)) return json({error:'Thiếu lat/lon'},400); const w=await fetchWeather(lat,lon); return json(w);}
   if(url.pathname==='/api/advice' && request.method==='POST'){const b=await request.json(); try{return json(await generateAdvice(env,b));}catch(e){return json({error:e.message},503)}}
+  if(url.pathname.startsWith('/api/recommendations/') && request.method==='DELETE'){const rid=decodeURIComponent(url.pathname.split('/').pop()); if(!env.DB) return json({ok:false,local:true}); await env.DB.prepare(`DELETE FROM recommendations WHERE id=?`).bind(rid).run(); return json({ok:true});}
+  if(url.pathname.startsWith('/api/task-status/') && request.method==='POST'){const tid=decodeURIComponent(url.pathname.split('/').pop()); const b=await request.json().catch(()=>({})); if(!env.DB) return json({ok:false,local:true}); if(b.offsetDays){const row=await env.DB.prepare(`SELECT scheduled_at FROM tasks WHERE id=?`).bind(tid).first(); if(!row?.scheduled_at)return json({error:'Task chưa có thời gian'},400); const next=new Date(new Date(row.scheduled_at).getTime()+Number(b.offsetDays)*86400000).toISOString(); await env.DB.prepare(`UPDATE tasks SET scheduled_at=?,status=? WHERE id=?`).bind(next,b.status||'PLANNED',tid).run();}else{await env.DB.prepare(`UPDATE tasks SET status=?,completed_at=? WHERE id=?`).bind(b.status||'PLANNED',b.status==='DONE'?iso():null,tid).run();} return json({ok:true});}
   if(url.pathname==='/api/recommendations' && request.method==='POST'){const rec=await request.json(); await saveRecommendation(env,rec); return json({ok:true});}
   if(url.pathname==='/api/plants' && request.method==='POST'){const p=await request.json(); if(!env.DB) return json({ok:false,local:true}); await env.DB.prepare(`INSERT OR REPLACE INTO plants(id,crop,name,count,area,stage,season,lat,lon,last_check_at,last_observation,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(p.id,p.crop,p.name||cropName(p.crop),p.count||0,p.area||0,p.stage||'',p.season||'',p.lat||null,p.lon||null,p.last_check_at||null,p.last_observation||null,p.created_at||iso(),p.updated_at||iso()).run(); return json({ok:true});}
   if(url.pathname==='/api/sync' && request.method==='POST'){const b=await request.json(); if(!env.DB) return json({ok:false,local:true}); const stm=[]; for(const p of b.plants||[]) stm.push(env.DB.prepare(`INSERT OR REPLACE INTO plants(id,crop,name,count,area,stage,season,lat,lon,last_check_at,last_observation,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(p.id,p.crop,p.name||cropName(p.crop),p.count||0,p.area||0,p.stage||'',p.season||'',p.lat||null,p.lon||null,p.last_check_at||null,p.last_observation||null,p.created_at||iso(),p.updated_at||iso())); for(const i of b.inventory||[]) stm.push(env.DB.prepare(`INSERT OR REPLACE INTO inventory(id,name,active,crop,targets,label_verified,dose,phi,stock,unit,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(i.id,i.name||'',i.active||'',i.crop||'',i.targets||'',i.label_verified?1:0,i.dose||'',i.phi||'',i.stock||0,i.unit||'đv',i.created_at||iso())); for(const r of b.recs||[]) stm.push(env.DB.prepare(`INSERT OR REPLACE INTO recommendations(id,plant_id,title,body,payload,status,source,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`).bind(r.id,r.plant_id,r.title||'',r.body||'',r.payload||'',r.status||'PENDING',r.source||'LOCAL',r.created_at||iso(),iso())); for(const t of b.tasks||[]) stm.push(env.DB.prepare(`INSERT OR REPLACE INTO tasks(id,plant_id,rec_id,kind,title,scheduled_at,status,notes,meta,completed_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(t.id,t.plant_id||null,t.rec_id||null,t.kind||'',t.title||'',t.scheduled_at||null,t.status||'PLANNED',t.notes||'',t.meta||'',t.completed_at||null,t.created_at||iso())); await dbBatch(env,stm); return json({ok:true});}

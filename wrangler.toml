@@ -14,7 +14,7 @@ database_name = "nong-vu-ai-db"
 database_id = "86a70700-a042-402e-a3f9-c2c790ce87f7"
 
 [vars]
-OPENROUTER_MODEL = "openrouter/free"
+OPENROUTER_MODEL = "openai/gpt-oss-20b:free"
 OPENROUTER_VISION_MODEL = "openrouter/free"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
