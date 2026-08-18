@@ -53,55 +53,74 @@ async function callChatProvider(env, system, user, image){
     : user;
   messages.push({role:'user',content:userContent});
 
-  const openRouterKey=env.OPENROUTER_API_KEY;
-  if(openRouterKey){
-    const configuredModel=isImage
-      ? (env.OPENROUTER_VISION_MODEL||'openrouter/free')
-      : (env.OPENROUTER_MODEL||'openrouter/free');
-    const candidates=[configuredModel];
-    if(!isImage && configuredModel!=='openrouter/free') candidates.push('openrouter/free');
-
-    let lastError='';
-    for(const model of candidates){
-      try{
-        const payload={model,messages,temperature:0.15,max_tokens:700};
-        const headers={
-          'Content-Type':'application/json',
-          'Authorization':`Bearer ${openRouterKey}`,
-          'HTTP-Referer':env.APP_BASE_URL||'https://nhokk63.github.io/nong-vu-ai/',
-          'X-Title':'Nong Vu AI'
-        };
-        const ctrl=new AbortController(); const timer=setTimeout(()=>ctrl.abort('AI timeout'),16000); let r; try{r=await fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers,body:JSON.stringify(payload),signal:ctrl.signal});}finally{clearTimeout(timer)}
-        const d=await r.json().catch(()=>({}));
-        if(!r.ok){ lastError=d?.error?.message||`OpenRouter ${r.status}`; continue; }
-        const out=d?.choices?.[0]?.message?.content||'';
-        const parsed=extractJson(out); if(parsed) return parsed;
-        // Some free providers ignore the JSON-only instruction; keep usable text instead of falling back silently.
-        return {title:'Khuyến cáo AI',summary:out,assessment:'',risks:[],checks:[],nonChemical:[],chemical:[],weatherWindow:'',precautions:[],confidence:null,nextSteps:[]};
-      }catch(e){ lastError=e?.message||String(e); }
-    }
-    if(env.GROQ_API_KEY && !isImage){
-      // Fall through to Groq only after OpenRouter free routing failed.
-    } else if(lastError){
-      throw new Error(lastError);
-    }
-  }
-
+  // Fast path: Groq for text, because it is the primary low-latency provider.
   if(env.GROQ_API_KEY && !isImage){
-    const model=env.GROQ_MODEL||'llama-3.3-70b-versatile';
-    const payload={model,messages,temperature:0.2,response_format:{type:'json_object'}};
-    const r=await fetch('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${env.GROQ_API_KEY}`},body:JSON.stringify(payload)});
-    const d=await r.json().catch(()=>({}));
-    if(r.ok){
-      const out=d?.choices?.[0]?.message?.content||'';
-      const parsed=extractJson(out); if(parsed) return parsed;
-      return {title:'Khuyến cáo AI',summary:out,assessment:'',risks:[],checks:[],nonChemical:[],chemical:[],weatherWindow:'',precautions:[],confidence:null,nextSteps:[]};
-    }
-    throw new Error(d?.error?.message||`Groq ${r.status}`);
+    try{
+      const model=env.GROQ_MODEL||'llama-3.3-70b-versatile';
+      const payload={
+        model,
+        messages,
+        temperature:0.15,
+        max_tokens:650,
+        response_format:{type:'json_object'}
+      };
+      const ctrl=new AbortController();
+      const timer=setTimeout(()=>ctrl.abort(),10000);
+      let r;
+      try{
+        r=await fetch('https://api.groq.com/openai/v1/chat/completions',{
+          method:'POST',
+          headers:{'Content-Type':'application/json','Authorization':`Bearer ${env.GROQ_API_KEY}`},
+          body:JSON.stringify(payload),
+          signal:ctrl.signal
+        });
+      } finally { clearTimeout(timer); }
+      const d=await r.json().catch(()=>({}));
+      if(r.ok){
+        const out=d?.choices?.[0]?.message?.content||'';
+        const parsed=extractJson(out);
+        if(parsed) return parsed;
+        if(out) return {title:'Khuyến cáo AI',summary:out,assessment:'',risks:[],checks:[],nonChemical:[],chemical:[],weatherWindow:'',precautions:[],confidence:null,nextSteps:[]};
+      }
+    }catch(e){ /* fallback to OpenRouter */ }
   }
 
-  if(isImage) throw new Error('Chưa có AI vision miễn phí khả dụng');
-  throw new Error('AI cloud không trả được kết quả từ model miễn phí.');
+  // OpenRouter fallback. Never select paid models automatically.
+  if(env.OPENROUTER_API_KEY){
+    try{
+      const model=isImage
+        ? (env.OPENROUTER_VISION_MODEL||'openrouter/free')
+        : (env.OPENROUTER_MODEL||'openrouter/free');
+      const payload={model,messages,temperature:0.15,max_tokens:650};
+      const ctrl=new AbortController();
+      const timer=setTimeout(()=>ctrl.abort(),12000);
+      let r;
+      try{
+        r=await fetch('https://openrouter.ai/api/v1/chat/completions',{
+          method:'POST',
+          headers:{
+            'Content-Type':'application/json',
+            'Authorization':`Bearer ${env.OPENROUTER_API_KEY}`,
+            'HTTP-Referer':env.APP_BASE_URL||'https://nhokk63.github.io/nong-vu-ai/',
+            'X-Title':'Nong Vu AI'
+          },
+          body:JSON.stringify(payload),
+          signal:ctrl.signal
+        });
+      } finally { clearTimeout(timer); }
+      const d=await r.json().catch(()=>({}));
+      if(!r.ok) throw new Error(d?.error?.message||`OpenRouter ${r.status}`);
+      const out=d?.choices?.[0]?.message?.content||'';
+      const parsed=extractJson(out);
+      if(parsed) return parsed;
+      if(out) return {title:'Khuyến cáo AI',summary:out,assessment:'',risks:[],checks:[],nonChemical:[],chemical:[],weatherWindow:'',precautions:[],confidence:null,nextSteps:[]};
+    }catch(e){
+      if(isImage) throw new Error(e?.message||'AI vision miễn phí không khả dụng');
+    }
+  }
+
+  if(isImage) throw new Error('Chưa có AI vision miễn phí khả dụng.');
+  throw new Error('AI cloud không trả được kết quả. Groq và OpenRouter free đều không phản hồi trong thời gian cho phép.');
 }
 
 function adviceSystem(){
@@ -214,6 +233,26 @@ async function route(request, env){
   if(url.pathname==='/api/plants' && request.method==='POST'){const p=await request.json(); if(!env.DB) return json({ok:false,local:true}); await env.DB.prepare(`INSERT OR REPLACE INTO plants(id,crop,name,count,area,stage,season,lat,lon,last_check_at,last_observation,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(p.id,p.crop,p.name||cropName(p.crop),p.count||0,p.area||0,p.stage||'',p.season||'',p.lat||null,p.lon||null,p.last_check_at||null,p.last_observation||null,p.created_at||iso(),p.updated_at||iso()).run(); return json({ok:true});}
   if(url.pathname==='/api/sync' && request.method==='POST'){const b=await request.json(); if(!env.DB) return json({ok:false,local:true}); const stm=[]; for(const p of b.plants||[]) stm.push(env.DB.prepare(`INSERT OR REPLACE INTO plants(id,crop,name,count,area,stage,season,lat,lon,last_check_at,last_observation,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(p.id,p.crop,p.name||cropName(p.crop),p.count||0,p.area||0,p.stage||'',p.season||'',p.lat||null,p.lon||null,p.last_check_at||null,p.last_observation||null,p.created_at||iso(),p.updated_at||iso())); for(const i of b.inventory||[]) stm.push(env.DB.prepare(`INSERT OR REPLACE INTO inventory(id,name,active,crop,targets,label_verified,dose,phi,stock,unit,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(i.id,i.name||'',i.active||'',i.crop||'',i.targets||'',i.label_verified?1:0,i.dose||'',i.phi||'',i.stock||0,i.unit||'đv',i.created_at||iso())); for(const r of b.recs||[]) stm.push(env.DB.prepare(`INSERT OR REPLACE INTO recommendations(id,plant_id,title,body,payload,status,source,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`).bind(r.id,r.plant_id,r.title||'',r.body||'',r.payload||'',r.status||'PENDING',r.source||'LOCAL',r.created_at||iso(),iso())); for(const t of b.tasks||[]) stm.push(env.DB.prepare(`INSERT OR REPLACE INTO tasks(id,plant_id,rec_id,kind,title,scheduled_at,status,notes,meta,completed_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(t.id,t.plant_id||null,t.rec_id||null,t.kind||'',t.title||'',t.scheduled_at||null,t.status||'PLANNED',t.notes||'',t.meta||'',t.completed_at||null,t.created_at||iso())); await dbBatch(env,stm); return json({ok:true});}
   if(url.pathname==='/api/automation/run' && request.method==='POST'){const h=await runHourly(env); const d=await runDaily(env); return json({ok:true,created:(h.created||0)+(d.created||0),notifications:(h.notifications||0)+(d.notifications||0),status:{enabled:!!env.DB,telegram:!!(env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID),ai:!!(env.OPENROUTER_API_KEY||env.GROQ_API_KEY)}});}
+  if(url.pathname.startsWith('/api/recommendations/') && request.method==='DELETE'){
+    const id=decodeURIComponent(url.pathname.split('/').pop()||'');
+    if(!id) return json({error:'Thiếu recommendation id'},400);
+    if(env.DB) await env.DB.prepare('DELETE FROM recommendations WHERE id=?').bind(id).run();
+    return json({ok:true});
+  }
+  if(url.pathname.startsWith('/api/task-status/') && request.method==='POST'){
+    const id=decodeURIComponent(url.pathname.split('/').pop()||'');
+    const b=await request.json().catch(()=>({}));
+    if(!id) return json({error:'Thiếu task id'},400);
+    if(!env.DB) return json({ok:false,local:true});
+    if(b.offsetDays){
+      await env.DB.prepare('UPDATE tasks SET scheduled_at=?, status=?, completed_at=NULL WHERE id=?')
+        .bind(new Date(Date.now()+Number(b.offsetDays)*86400000).toISOString(), b.status||'PLANNED', id).run();
+    } else {
+      await env.DB.prepare('UPDATE tasks SET status=?, completed_at=? WHERE id=?')
+        .bind(b.status||'PLANNED', b.status==='DONE'?iso():null, id).run();
+    }
+    return json({ok:true});
+  }
   if(url.pathname==='/api/notify/test' && request.method==='POST'){const r=await notifyTelegram(env,'🌱 Nông Vụ AI\nTelegram đã kết nối thành công.'); return json(r);}
   if(url.pathname==='/api/location' && request.method==='GET'){const lat=Number(url.searchParams.get('lat')),lon=Number(url.searchParams.get('lon')); if(!Number.isFinite(lat)||!Number.isFinite(lon)) return json({error:'Thiếu lat/lon'},400); return json({name:await reverseGeocode(lat,lon)});}
   return null;

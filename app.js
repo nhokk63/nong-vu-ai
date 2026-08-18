@@ -1,3 +1,4 @@
+const DEFAULT_API_BASE = 'https://nong-vu-ai.draculacom1.workers.dev';
 const BASE_URL = new URL('./', document.baseURI);
 const FALLBACK_KNOWLEDGE = {
   crops: {
@@ -458,5 +459,66 @@ function autoMonitor(){
   }catch{}
 }
 setInterval(autoMonitor,15*60*1000);
+
+
+/* VIP PRO UI/UX patch */
+(()=>{
+  const st=document.createElement('style');
+  st.textContent=`
+  .card,.item,.plant-card,.monitor-bar,.weather-card{animation:nvFade .35s cubic-bezier(.2,.7,.2,1) both}
+  button{transition:transform .14s ease,opacity .14s ease}
+  button:active{transform:scale(.97)}
+  .task-pro{cursor:pointer;transition:transform .2s ease,box-shadow .2s ease}
+  .task-pro:hover{transform:translateY(-2px)}
+  .count-pro{font-weight:800;font-size:18px;margin-top:6px}
+  .count-pro.overdue{color:#b42318}.count-pro.done{color:#1a7f37}
+  .task-meta-pro{font-size:12px;color:#777;margin-top:6px}
+  .sheet-pro{padding:18px}
+  @keyframes nvFade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  `;
+  document.head.appendChild(st);
+
+  const apiBase='https://nong-vu-ai.draculacom1.workers.dev';
+  const jfetch=async(path,opts={})=>{
+    const r=await fetch(apiBase+path,{headers:{'Content-Type':'application/json',...(opts.headers||{})},...opts});
+    const t=await r.text(); let d={}; try{d=t?JSON.parse(t):{}}catch{d={raw:t}};
+    if(!r.ok) throw new Error(d.error||`HTTP ${r.status}`); return d;
+  };
+  const esc2=s=>String(s??'').replace(/[&<>\"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[m]));
+  const cd=iso=>{
+    const d=new Date(iso).getTime()-Date.now(), mins=Math.round(Math.abs(d)/60000), days=Math.floor(mins/1440), h=Math.floor((mins%1440)/60), m=mins%60;
+    const t=days?`${days} ngày ${h} giờ`:h?`${h} giờ ${m} phút`:`${m} phút`;
+    return d>=0?`Còn ${t}`:`Quá ${t}`;
+  };
+  function taskModal(t,p){
+    const el=document.createElement('div'); el.className='modal';
+    const notes=(t.notes||'').split(/\n+/).map(x=>x.trim()).filter(Boolean);
+    el.innerHTML=`<div class="sheet sheet-pro"><div class="handle"></div><button class="icon-btn" data-vclose style="float:right">×</button><div class="item-title" style="font-size:22px">${esc2(t.title||t.kind)}</div><div class="item-meta">${esc2(p?.name||'Cây trồng')} · ${new Date(t.scheduled_at).toLocaleString('vi-VN')}</div><div class="count-pro ${new Date(t.scheduled_at)<new Date()?'overdue':''}" data-vcount>${t.status==='DONE'?'Đã hoàn thành':cd(t.scheduled_at)}</div><div class="section"><div class="section-title">Yêu cầu thực hiện</div>${notes.length?`<ul>${notes.map(x=>`<li>${esc2(x)}</li>`).join('')}</ul>`:`<div class="note">Chưa có yêu cầu chi tiết.</div>`}</div><div class="card"><b>Sau khi thực hiện</b><div class="note" style="margin-top:5px">Ghi nhận tình trạng cây, ảnh hiện trường và kết quả. AI sẽ dùng dữ liệu này cho chu kỳ tư vấn kế tiếp.</div></div><div class="actions">${t.status!=='DONE'?`<button class="btn success" data-vdone>✓ Đã thực hiện</button><button class="btn secondary" data-vpostpone>Hoãn 1 ngày</button>`:''}<button class="btn primary" data-vclose>Đóng</button></div></div>`;
+    document.body.appendChild(el);
+    const timer=setInterval(()=>{const q=el.querySelector('[data-vcount]'); if(q&&t.status!=='DONE')q.textContent=cd(t.scheduled_at)},30000);
+    el.addEventListener('click',async ev=>{
+      if(ev.target.closest('[data-vclose]')){clearInterval(timer);el.remove();return}
+      if(ev.target.closest('[data-vdone]')){await jfetch('/api/task-status/'+encodeURIComponent(t.id),{method:'POST',body:JSON.stringify({status:'DONE'})});clearInterval(timer);el.remove();render();return}
+      if(ev.target.closest('[data-vpostpone]')){await jfetch('/api/task-status/'+encodeURIComponent(t.id),{method:'POST',body:JSON.stringify({status:'PLANNED',offsetDays:1})});clearInterval(timer);el.remove();render();return}
+    });
+  }
+  async function patchCalendar(){
+    if((location.hash||'#home')!=='#calendar')return;
+    const root=document.querySelector('#app .content'); if(!root)return;
+    try{
+      const d=await jfetch('/api/data'); const tasks=(d.tasks||[]).slice().sort((a,b)=>(a.scheduled_at||'').localeCompare(b.scheduled_at||''));
+      const plants=d.plants||[]; if(!tasks.length)return;
+      const host=root.querySelector('.list'); if(!host)return;
+      host.innerHTML=tasks.map(t=>{
+        const p=plants.find(x=>x.id===t.plant_id), overdue=t.status!=='DONE'&&new Date(t.scheduled_at)<new Date();
+        return `<div class="item task-pro" data-vtask="${esc2(t.id)}"><div class="row"><div><div class="item-title">${esc2(t.title||t.kind)}</div><div class="item-meta">${esc2(p?.name||'Cây trồng')} · ${new Date(t.scheduled_at).toLocaleString('vi-VN')}</div></div><span class="tag ${t.status==='DONE'?'green':overdue?'red':'blue'}">${esc2(t.status)}</span></div><div class="count-pro ${overdue?'overdue':''}">${t.status==='DONE'?'Đã hoàn thành':cd(t.scheduled_at)}</div><div class="task-meta-pro">Chạm để xem yêu cầu chi tiết • sau khi làm nhớ cập nhật cây</div></div>`;
+      }).join('');
+      host.querySelectorAll('[data-vtask]').forEach(e=>e.addEventListener('click',()=>taskModal(tasks.find(t=>t.id===e.dataset.vtask),plants.find(p=>p.id===tasks.find(t=>t.id===e.dataset.vtask)?.plant_id))));
+    }catch{}
+  }
+  const oldHash=location.hash; setTimeout(patchCalendar,300);
+  window.addEventListener('hashchange',()=>setTimeout(patchCalendar,180));
+  setInterval(patchCalendar,30000);
+})();
 
 boot().catch(err=>{localLoad();render();toast('Khởi động ở chế độ offline','info');console.error(err);});
