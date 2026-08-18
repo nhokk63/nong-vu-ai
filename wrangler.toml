@@ -7,13 +7,14 @@ workers_dev = true
 directory = "."
 binding = "ASSETS"
 
+
 [[d1_databases]]
 binding = "DB"
 database_name = "nong-vu-ai-db"
 database_id = "86a70700-a042-402e-a3f9-c2c790ce87f7"
 
 [vars]
-OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct:free"
+OPENROUTER_MODEL = "openrouter/free"
 OPENROUTER_VISION_MODEL = "openrouter/free"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 

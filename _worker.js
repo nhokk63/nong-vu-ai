@@ -1,9 +1,7 @@
-const json = (data, status=200, extra={}) => new Response(JSON.stringify(data), {status, headers:{'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store', ...extra}});
+const corsHeaders = (origin='*') => ({'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Headers':'Content-Type, X-App-Token, Authorization', 'Access-Control-Allow-Methods':'GET,POST,OPTIONS'});
+const json = (data, status=200, extra={}) => new Response(JSON.stringify(data), {status, headers:{'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store', ...corsHeaders('*'), ...extra}});
 const text = (data, status=200, extra={}) => new Response(data,{status,headers:{'Content-Type':'text/plain; charset=utf-8',...extra}});
 
-function corsHeaders(origin='*'){
-  return {'Access-Control-Allow-Origin':origin,'Access-Control-Allow-Headers':'Content-Type, X-App-Token, Authorization','Access-Control-Allow-Methods':'GET,POST,OPTIONS'};
-}
 function authOk(request, env){
   if(!env.APP_TOKEN) return true;
   const token=request.headers.get('X-App-Token') || request.headers.get('Authorization')?.replace(/^Bearer\s+/i,'');
@@ -49,57 +47,61 @@ function extractJson(s){
 
 async function callChatProvider(env, system, user, image){
   const messages=[{role:'system',content:system}];
-  let userContent;
-  if(image && typeof image==='string' && image.startsWith('data:image/')){
-    userContent=[{type:'text',text:user},{type:'image_url',image_url:{url:image}}];
-  } else {
-    userContent=user;
-  }
+  const isImage=!!(image && typeof image==='string' && image.startsWith('data:image/'));
+  const userContent=isImage
+    ? [{type:'text',text:user},{type:'image_url',image_url:{url:image}}]
+    : user;
   messages.push({role:'user',content:userContent});
 
   const openRouterKey=env.OPENROUTER_API_KEY;
   if(openRouterKey){
-    const model=(image && typeof image==='string' && image.startsWith('data:image/'))
+    const configuredModel=isImage
       ? (env.OPENROUTER_VISION_MODEL||'openrouter/free')
-      : (env.OPENROUTER_MODEL||'meta-llama/llama-3.3-70b-instruct:free');
-    const payload={model,messages,temperature:0.2,max_tokens:2200,response_format:{type:'json_object'}};
-    const headers={
-      'Content-Type':'application/json',
-      'Authorization':`Bearer ${openRouterKey}`,
-      'HTTP-Referer':env.APP_BASE_URL||'https://nong-vu-ai.pages.dev',
-      'X-Title':'Nong Vu AI'
-    };
-    let r=await fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers,body:JSON.stringify(payload)});
-    let d=await r.json();
-    if(!r.ok && payload.response_format){
-      const retryPayload={model,messages,temperature:0.2,max_tokens:2200};
-      r=await fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers,body:JSON.stringify(retryPayload)});
-      d=await r.json();
+      : (env.OPENROUTER_MODEL||'openrouter/free');
+    const candidates=[configuredModel];
+    if(!isImage && configuredModel!=='openrouter/free') candidates.push('openrouter/free');
+
+    let lastError='';
+    for(const model of candidates){
+      try{
+        const payload={model,messages,temperature:0.2};
+        const headers={
+          'Content-Type':'application/json',
+          'Authorization':`Bearer ${openRouterKey}`,
+          'HTTP-Referer':env.APP_BASE_URL||'https://nhokk63.github.io/nong-vu-ai/',
+          'X-Title':'Nong Vu AI'
+        };
+        const r=await fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers,body:JSON.stringify(payload)});
+        const d=await r.json().catch(()=>({}));
+        if(!r.ok){ lastError=d?.error?.message||`OpenRouter ${r.status}`; continue; }
+        const out=d?.choices?.[0]?.message?.content||'';
+        const parsed=extractJson(out); if(parsed) return parsed;
+        // Some free providers ignore the JSON-only instruction; keep usable text instead of falling back silently.
+        return {title:'Khuyến cáo AI',summary:out,assessment:'',risks:[],checks:[],nonChemical:[],chemical:[],weatherWindow:'',precautions:[],confidence:null,nextSteps:[]};
+      }catch(e){ lastError=e?.message||String(e); }
     }
-    if(r.ok){
-      const out=d?.choices?.[0]?.message?.content||'';
-      const parsed=extractJson(out);
-      if(parsed) return parsed;
-      return {title:'Khuyến cáo AI',summary:out||'AI không trả về nội dung.',assessment:out||'',risks:[],checks:[],nonChemical:[],chemical:[],weatherWindow:'',precautions:[],confidence:'unknown',nextSteps:[],_raw:true};
+    if(env.GROQ_API_KEY && !isImage){
+      // Fall through to Groq only after OpenRouter free routing failed.
+    } else if(lastError){
+      throw new Error(lastError);
     }
-    throw new Error(d?.error?.message||`OpenRouter ${r.status}`);
   }
 
-  if(env.GROQ_API_KEY && !(image && typeof image==='string' && image.startsWith('data:image/'))){
+  if(env.GROQ_API_KEY && !isImage){
     const model=env.GROQ_MODEL||'llama-3.3-70b-versatile';
     const payload={model,messages,temperature:0.2,response_format:{type:'json_object'}};
     const r=await fetch('https://api.groq.com/openai/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${env.GROQ_API_KEY}`},body:JSON.stringify(payload)});
-    const d=await r.json();
+    const d=await r.json().catch(()=>({}));
     if(r.ok){
       const out=d?.choices?.[0]?.message?.content||'';
       const parsed=extractJson(out); if(parsed) return parsed;
-      throw new Error('Groq trả về dữ liệu không đúng JSON');
+      return {title:'Khuyến cáo AI',summary:out,assessment:'',risks:[],checks:[],nonChemical:[],chemical:[],weatherWindow:'',precautions:[],confidence:null,nextSteps:[]};
     }
     throw new Error(d?.error?.message||`Groq ${r.status}`);
   }
 
-  if(image && typeof image==='string' && image.startsWith('data:image/')) throw new Error('Chưa có AI vision miễn phí khả dụng');
-  throw new Error('Chưa cấu hình OPENROUTER_API_KEY hoặc GROQ_API_KEY');
+  if(isImage) throw new Error('Chưa có AI vision miễn phí khả dụng');
+  throw new Error('AI cloud không trả được kết quả từ model miễn phí.');
 }
 
 function adviceSystem(){
@@ -203,7 +205,7 @@ async function route(request, env){
   const url=new URL(request.url);
   const auth=needAuth(request,env); if(auth) return auth;
   if(request.method==='OPTIONS') return new Response(null,{status:204,headers:corsHeaders(request.headers.get('Origin')||'*')});
-  if(url.pathname==='/api/health' && request.method==='GET') return json({ok:true,db:!!env.DB,ai:!!(env.OPENROUTER_API_KEY||env.GROQ_API_KEY),telegram:!!(env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID),models:{text:env.OPENROUTER_MODEL||'meta-llama/llama-3.3-70b-instruct:free',vision:env.OPENROUTER_VISION_MODEL||'openrouter/free',fallback:env.GROQ_MODEL||'llama-3.3-70b-versatile'}});
+  if(url.pathname==='/api/health' && request.method==='GET') return json({ok:true,db:!!env.DB,ai:!!(env.OPENROUTER_API_KEY||env.GROQ_API_KEY),telegram:!!(env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID),models:{text:env.OPENROUTER_MODEL||'openrouter/free',vision:env.OPENROUTER_VISION_MODEL||'openrouter/free',fallback:env.GROQ_MODEL||'llama-3.3-70b-versatile'}});
   if(url.pathname==='/api/automation/status' && request.method==='GET') return json({enabled:!!env.DB,telegram:!!(env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID),ai:!!(env.OPENROUTER_API_KEY||env.GROQ_API_KEY),crons:['0 * * * *','0 22 * * *']});
   if(url.pathname==='/api/data' && request.method==='GET') return json(await readAll(env));
   if(url.pathname==='/api/weather' && request.method==='GET'){const lat=Number(url.searchParams.get('lat')),lon=Number(url.searchParams.get('lon')); if(!Number.isFinite(lat)||!Number.isFinite(lon)) return json({error:'Thiếu lat/lon'},400); const w=await fetchWeather(lat,lon); return json(w);}

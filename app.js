@@ -12,8 +12,8 @@ const FALLBACK_KNOWLEDGE = {
 const state = {
   tab: location.hash.replace(/^#/,'') || 'home',
   plants: [], recs: [], tasks: [], inventory: [], weather: null,
-  token: localStorage.getItem('appToken') || '',
-  apiBase: localStorage.getItem('apiBase') || '',
+  token: '',
+  apiBase: DEFAULT_API_BASE,
   knowledge: FALLBACK_KNOWLEDGE,
   backend: 'local', automation: null,
 };
@@ -59,7 +59,6 @@ function apiUrl(path){
 
 async function api(path,opts={}){
   const headers={'Content-Type':'application/json',...(opts.headers||{})};
-  if(state.token) headers['X-App-Token']=state.token;
   return jsonFetch(apiUrl(path),{...opts,headers});
 }
 
@@ -296,7 +295,7 @@ function calendarView(){
 }
 function settingsView(){
  return `<div class="section"><div class="card"><div class="section-title">Theo dõi 24/7</div><div class="note" style="margin-top:4px">Worker sẽ kiểm tra thời tiết mỗi giờ, nhắc việc/cập nhật cây và chạy tổng hợp AI hằng ngày. Telegram được gửi từ secret server-side.</div><div class="status-line" style="margin-top:12px"><span class="status-dot ${state.automation?.enabled?'on':'off'}"></span><span>${state.automation?.enabled?'Đã kết nối automation':'Chưa kết nối automation'}</span><span class="muted">${state.automation?.telegram?'Telegram OK':'Telegram chưa nối'}</span></div><div class="actions"><button class="btn primary" data-action="run-automation">▶ Chạy kiểm tra ngay</button><button class="btn secondary" data-action="test-telegram">Gửi tin thử</button></div></div></div>
- <div class="section"><div class="card"><div class="section-title">Kết nối AI</div><div class="note" style="margin-top:4px">Để trống nếu API cùng domain. Không đặt secret OpenAI trong frontend.</div><div class="form" style="margin-top:10px"><input id="api-base" class="field" placeholder="https://ten-app.pages.dev" value="${esc(state.apiBase)}"><input id="app-token" class="field" type="password" placeholder="APP_TOKEN" value="${esc(state.token)}"><div class="actions"><button class="btn primary" data-action="save-token">Lưu</button><button class="btn secondary" data-action="test-ai">Kiểm tra</button></div></div></div></div>
+ <div class="section"><div class="card"><div class="section-title">Trạng thái AI</div><div class="note" style="margin-top:4px">AI chạy server-side trên Cloudflare Worker. API key không nằm trong webapp.</div><div class="status-line" style="margin-top:12px"><span class="status-dot ${state.backend==='cloud'?'on':'off'}"></span><span>Worker: ${state.backend==='cloud'?'Đã kết nối':'Chưa kết nối'}</span><span class="muted">OpenRouter · Free Router</span></div><div class="actions"><button class="btn primary" data-action="test-ai">Kiểm tra AI</button></div></div></div>
  <div class="section"><div class="card"><div class="section-title">Vật tư đã đối chiếu</div><div class="note" style="margin-top:4px">Chỉ vật tư đã đối chiếu nhãn mới được AI dùng để đề xuất liều/PHI cụ thể.</div><div class="actions"><button class="btn primary" data-action="add-inventory">＋ Thêm vật tư</button></div>${inventoryList()}</div></div>
  <div class="section"><div class="card"><div class="section-title">Dữ liệu</div><div class="actions"><button class="btn secondary" data-action="seed">Dữ liệu mẫu</button><button class="btn secondary" data-action="export">Xuất JSON</button><button class="btn danger" data-action="clear">Xóa dữ liệu máy</button></div></div></div>`;
 }
@@ -355,12 +354,18 @@ async function consult(idPlant){
     const w=await fetchWeatherForPlant(p); state.weather=w;
     let image=null; const f=$('#img',e).files?.[0]; if(f) image=await new Promise((resolve,reject)=>{const rd=new FileReader();rd.onload=()=>resolve(rd.result);rd.onerror=reject;rd.readAsDataURL(f);});
     const body={plant:p,observation:$('#obs',e).value.trim(),inventory:state.inventory,weather:w,history:{recommendations:state.recs.filter(r=>r.plant_id===p.id).slice(0,10),tasks:state.tasks.filter(t=>t.plant_id===p.id).slice(0,10)},knowledge:state.knowledge,image};
-    let r; let real=false;
-    let cloudError=''; try{r=await api('/api/advice',{method:'POST',body:JSON.stringify(body)});real=true;}catch(err){cloudError=err?.message||String(err); r=localAdvice(p,body.observation,w);}
-    const rec={id:id(),plant_id:p.id,title:r.title||'Khuyến cáo AI',body:r.body||formatAdvice(r),payload:JSON.stringify(r),status:'PENDING',created_at:now(),source:real?'AI cloud (OpenRouter/Groq)':'LOCAL FALLBACK'};
+    let r;
+    try{
+      r=await api('/api/advice',{method:'POST',body:JSON.stringify(body)});
+    }catch(err){
+      out.innerHTML=`<div class="card" style="margin-top:12px;color:#b22"><div class="pill red">AI CLOUD LỖI</div><div class="small" style="white-space:pre-wrap;line-height:1.5;margin-top:8px">${esc(err.message)}</div><div class="note" style="margin-top:8px">Không tự chuyển sang LOCAL FALLBACK để mày thấy đúng lỗi provider.</div></div>`;
+      toast(`AI cloud lỗi: ${err.message}`,'error');
+      return;
+    }
+    const rec={id:id(),plant_id:p.id,title:r.title||'Khuyến cáo AI',body:r.body||formatAdvice(r),payload:JSON.stringify(r),status:'PENDING',created_at:now(),source:'AI cloud (OpenRouter)'};
     state.recs.unshift(rec); persistLocal(); try{await api('/api/recommendations',{method:'POST',body:JSON.stringify(rec)});state.backend='cloud';}catch{state.backend='local';}
-    out.innerHTML=`<div class="card advice" style="margin-top:12px"><div class="pill ${real?'green':'orange'}">${real?'AI CLOUD':'LOCAL FALLBACK'}</div><div class="item-title" style="margin-top:8px">${esc(rec.title)}</div><div class="small" style="white-space:pre-wrap;line-height:1.5;margin-top:8px">${esc(rec.body)}</div><div class="actions"><button class="btn success" data-action="approve-rec" data-id="${esc(rec.id)}">✓ Duyệt → lịch</button><button class="btn secondary" data-action="close-modal">Đóng</button></div></div>`;
-    toast(real?'AI đã tạo khuyến cáo':`AI cloud lỗi: ${cloudError||'không xác định'} — đã tạo đánh giá dự phòng`,'success');
+    out.innerHTML=`<div class="card advice" style="margin-top:12px"><div class="pill green">AI CLOUD</div><div class="item-title" style="margin-top:8px">${esc(rec.title)}</div><div class="small" style="white-space:pre-wrap;line-height:1.5;margin-top:8px">${esc(rec.body)}</div><div class="actions"><button class="btn success" data-action="approve-rec" data-id="${esc(rec.id)}">✓ Duyệt → lịch</button><button class="btn secondary" data-action="close-modal">Đóng</button></div></div>`;
+    toast('AI đã tạo khuyến cáo','success');
   }catch(err){out.innerHTML=`<div class="card" style="margin-top:12px;color:#b22">${esc(err.message)}</div>`;} finally{btn.disabled=false;}
  });
 }
@@ -411,7 +416,6 @@ $('#app').addEventListener('click',async e=>{
  else if(action==='consult')consult(a.dataset.id);
  else if(action==='update-plant')updatePlant(a.dataset.id);
  else if(['approve-rec','postpone-rec','reject-rec','done-task','postpone-task'].includes(action))handleAction(action,a.dataset.id);
- else if(action==='save-token'){state.apiBase=$('#api-base').value.trim().replace(/\/$/,'');state.token=$('#app-token').value.trim();localStorage.setItem('apiBase',state.apiBase);localStorage.setItem('appToken',state.token);toast('Đã lưu kết nối');}
  else if(action==='test-ai'){try{const h=await api('/api/health');toast(`Backend OK • AI: ${h.ai?'sẵn sàng':'chưa cấu hình'} • DB: ${h.db?'OK':'chưa nối'}`,'success');}catch(err){toast(`Chưa kết nối backend: ${err.message}`,'error');}}
  else if(action==='run-automation'){try{toast('Đang chạy kiểm tra tự động…'); const r=await api('/api/automation/run',{method:'POST',body:JSON.stringify({})}); state.automation=r.status||state.automation; await loadData(); render(); toast(`Đã kiểm tra: ${r.created||0} khuyến cáo, ${r.notifications||0} thông báo`,'success');}catch(err){toast(`Automation chưa sẵn sàng: ${err.message}`,'error');}}
  else if(action==='test-telegram'){try{const r=await api('/api/notify/test',{method:'POST',body:JSON.stringify({})}); toast(r.ok?'Telegram đã gửi tin thử':'Telegram chưa cấu hình', r.ok?'success':'error');}catch(err){toast(`Telegram lỗi: ${err.message}`,'error');}}
