@@ -14,7 +14,6 @@ OPENAI_MODEL = "gpt-5.6"
 crons = ["0 * * * *", "0 22 * * *"]
 
 # After creating your D1 database, put its id here OR bind DB from the Cloudflare dashboard.
-[[d1_databases]]
-binding = "DB"
-database_name = "nong-vu-ai-db"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+# D1 is intentionally not declared here for the first deploy.
+# After the Worker is created, create a D1 database and add the DB binding
+# from Cloudflare Dashboard → Worker → Settings → Bindings.
