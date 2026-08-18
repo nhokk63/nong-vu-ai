@@ -62,19 +62,25 @@ async function callChatProvider(env, system, user, image){
     const model=(image && typeof image==='string' && image.startsWith('data:image/'))
       ? (env.OPENROUTER_VISION_MODEL||'openrouter/free')
       : (env.OPENROUTER_MODEL||'meta-llama/llama-3.3-70b-instruct:free');
-    const payload={model,messages,temperature:0.2};
+    const payload={model,messages,temperature:0.2,max_tokens:2200,response_format:{type:'json_object'}};
     const headers={
       'Content-Type':'application/json',
       'Authorization':`Bearer ${openRouterKey}`,
       'HTTP-Referer':env.APP_BASE_URL||'https://nong-vu-ai.pages.dev',
       'X-Title':'Nong Vu AI'
     };
-    const r=await fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers,body:JSON.stringify(payload)});
-    const d=await r.json();
+    let r=await fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers,body:JSON.stringify(payload)});
+    let d=await r.json();
+    if(!r.ok && payload.response_format){
+      const retryPayload={model,messages,temperature:0.2,max_tokens:2200};
+      r=await fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers,body:JSON.stringify(retryPayload)});
+      d=await r.json();
+    }
     if(r.ok){
       const out=d?.choices?.[0]?.message?.content||'';
-      const parsed=extractJson(out); if(parsed) return parsed;
-      throw new Error('OpenRouter trả về dữ liệu không đúng JSON');
+      const parsed=extractJson(out);
+      if(parsed) return parsed;
+      return {title:'Khuyến cáo AI',summary:out||'AI không trả về nội dung.',assessment:out||'',risks:[],checks:[],nonChemical:[],chemical:[],weatherWindow:'',precautions:[],confidence:'unknown',nextSteps:[],_raw:true};
     }
     throw new Error(d?.error?.message||`OpenRouter ${r.status}`);
   }

@@ -356,11 +356,11 @@ async function consult(idPlant){
     let image=null; const f=$('#img',e).files?.[0]; if(f) image=await new Promise((resolve,reject)=>{const rd=new FileReader();rd.onload=()=>resolve(rd.result);rd.onerror=reject;rd.readAsDataURL(f);});
     const body={plant:p,observation:$('#obs',e).value.trim(),inventory:state.inventory,weather:w,history:{recommendations:state.recs.filter(r=>r.plant_id===p.id).slice(0,10),tasks:state.tasks.filter(t=>t.plant_id===p.id).slice(0,10)},knowledge:state.knowledge,image};
     let r; let real=false;
-    try{r=await api('/api/advice',{method:'POST',body:JSON.stringify(body)});real=true;}catch{r=localAdvice(p,body.observation,w);}
+    let cloudError=''; try{r=await api('/api/advice',{method:'POST',body:JSON.stringify(body)});real=true;}catch(err){cloudError=err?.message||String(err); r=localAdvice(p,body.observation,w);}
     const rec={id:id(),plant_id:p.id,title:r.title||'Khuyến cáo AI',body:r.body||formatAdvice(r),payload:JSON.stringify(r),status:'PENDING',created_at:now(),source:real?'AI cloud (OpenRouter/Groq)':'LOCAL FALLBACK'};
     state.recs.unshift(rec); persistLocal(); try{await api('/api/recommendations',{method:'POST',body:JSON.stringify(rec)});state.backend='cloud';}catch{state.backend='local';}
     out.innerHTML=`<div class="card advice" style="margin-top:12px"><div class="pill ${real?'green':'orange'}">${real?'AI CLOUD':'LOCAL FALLBACK'}</div><div class="item-title" style="margin-top:8px">${esc(rec.title)}</div><div class="small" style="white-space:pre-wrap;line-height:1.5;margin-top:8px">${esc(rec.body)}</div><div class="actions"><button class="btn success" data-action="approve-rec" data-id="${esc(rec.id)}">✓ Duyệt → lịch</button><button class="btn secondary" data-action="close-modal">Đóng</button></div></div>`;
-    toast(real?'AI đã tạo khuyến cáo':'AI cloud (OpenRouter/Groq) chưa sẵn sàng — đã tạo đánh giá dự phòng','success');
+    toast(real?'AI đã tạo khuyến cáo':`AI cloud lỗi: ${cloudError||'không xác định'} — đã tạo đánh giá dự phòng`,'success');
   }catch(err){out.innerHTML=`<div class="card" style="margin-top:12px;color:#b22">${esc(err.message)}</div>`;} finally{btn.disabled=false;}
  });
 }
