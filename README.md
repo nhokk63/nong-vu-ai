@@ -1,6 +1,6 @@
-# Nông Vụ AI v17 — theo dõi tự động 24/7
+# Nông Vụ AI v18 — Free AI + theo dõi tự động 24/7
 
-Bản này giữ giao diện iOS 18 + GitHub Pages/local-first, đồng thời thêm **Cloudflare Worker + D1 + Cron + OpenAI + Telegram** để hệ thống tự theo dõi khi mày không mở app.
+Bản này giữ giao diện iOS 18 + GitHub Pages/local-first, đồng thời thêm **Cloudflare Worker + D1 + Cron + OpenRouter / Groq + Telegram**; AI mặc định dùng Llama 3.3 70B miễn phí qua OpenRouter và Groq làm fallback. để hệ thống tự theo dõi khi mày không mở app.
 
 ## Có gì mới
 
@@ -32,7 +32,7 @@ Worker phục vụ luôn static assets và API bằng `_worker.js`; cấu hình 
 6. Dùng Wrangler config này để Worker build với `main = "_worker.js"` và assets ở `.`.
 7. Tạo Secrets:
    - `APP_TOKEN` — chuỗi bí mật để app gọi API.
-   - `OPENAI_API_KEY` — API key server-side.
+   - `OPENROUTER_API_KEY / GROQ_API_KEY` — API key server-side.
    - `TELEGRAM_BOT_TOKEN` — token bot Telegram.
    - `TELEGRAM_CHAT_ID` — chat id nhận thông báo.
 8. Sau deploy, mở URL `*.workers.dev` của Worker. Trong app, có thể để API Base trống nếu frontend được phục vụ cùng Worker.
@@ -46,9 +46,9 @@ Cloudflare Cron dùng UTC.
 
 ## AI và thuốc
 
-Worker gọi OpenAI Responses API. AI được yêu cầu chỉ đưa sản phẩm/liều/PHI cụ thể khi `inventory.label_verified=1` và dữ liệu phù hợp với cây/đối tượng. Nếu thiếu dữ liệu, AI phải nói rõ chưa đủ dữ liệu.
+Worker gọi OpenRouter / Groq Chat Completions API. AI được yêu cầu chỉ đưa sản phẩm/liều/PHI cụ thể khi `inventory.label_verified=1` và dữ liệu phù hợp với cây/đối tượng. Nếu thiếu dữ liệu, AI phải nói rõ chưa đủ dữ liệu.
 
-Không để `OPENAI_API_KEY` hoặc Telegram token trong `app.js`, GitHub Pages hay repo công khai.
+Không để `OPENROUTER_API_KEY / GROQ_API_KEY` hoặc Telegram token trong `app.js`, GitHub Pages hay repo công khai.
 
 ## Nguồn kiến thức khởi đầu
 
