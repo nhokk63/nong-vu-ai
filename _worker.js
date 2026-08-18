@@ -80,7 +80,8 @@ async function callChatProvider(env, system, user, image){
         const out=d?.choices?.[0]?.message?.content||'';
         const parsed=extractJson(out);
         if(parsed) return parsed;
-        if(out) return {title:'Khuyến cáo AI',summary:out,assessment:'',risks:[],checks:[],nonChemical:[],chemical:[],weatherWindow:'',precautions:[],confidence:null,nextSteps:[]};
+        if(parsed) return parsed;
+        throw new Error('Groq trả về định dạng không hợp lệ.');
       }
     }catch(e){ /* fallback to OpenRouter */ }
   }
@@ -113,7 +114,8 @@ async function callChatProvider(env, system, user, image){
       const out=d?.choices?.[0]?.message?.content||'';
       const parsed=extractJson(out);
       if(parsed) return parsed;
-      if(out) return {title:'Khuyến cáo AI',summary:out,assessment:'',risks:[],checks:[],nonChemical:[],chemical:[],weatherWindow:'',precautions:[],confidence:null,nextSteps:[]};
+      if(parsed) return parsed;
+      throw new Error('OpenRouter trả về định dạng không hợp lệ.');
     }catch(e){
       if(isImage) throw new Error(e?.message||'AI vision miễn phí không khả dụng');
     }
@@ -124,7 +126,7 @@ async function callChatProvider(env, system, user, image){
 }
 
 function adviceSystem(){
-  return `Bạn là AI trợ lý nông vụ cho cà phê, hồ tiêu và cau tại Việt Nam. Mục tiêu là quản lý mùa vụ theo trạng thái thực tế, ưu tiên IPM và biện pháp không hóa học trước. Không được tự bịa tên thuốc, hoạt chất, liều hoặc PHI. Chỉ đưa sản phẩm/liều/PHI cụ thể khi inventory có label_verified=1 và thông tin đó phù hợp với cây/đối tượng. Nếu chưa đủ dữ liệu, nói rõ chưa đủ dữ liệu. Không biến lịch phun thành lịch cứng: mỗi xử lý phải có mốc đánh giá lại. Luôn đưa nextSteps để người dùng có thể duyệt thành lịch. Trả JSON thuần với các trường: title, summary, assessment, risks[], checks[], nonChemical[], chemical[], weatherWindow, precautions[], confidence, nextSteps[]. chemical[] có product,active,dose,phi,why và chỉ có khi đủ dữ liệu xác minh. nextSteps[] có daysFromNow,kind,title,notes. Không chẩn đoán chắc chắn khi thiếu ảnh/triệu chứng.`;
+  return `Bạn là AI trợ lý nông vụ cho cà phê, hồ tiêu và cau tại Việt Nam. Mục tiêu là quản lý mùa vụ theo trạng thái thực tế, ưu tiên IPM và biện pháp không hóa học trước. Không được tự bịa tên thuốc, hoạt chất, liều hoặc PHI. Chỉ đưa sản phẩm/liều/PHI cụ thể khi inventory có label_verified=1 và thông tin đó phù hợp với cây/đối tượng. Nếu chưa đủ dữ liệu, nói rõ chưa đủ dữ liệu. Không biến lịch phun thành lịch cứng: mỗi xử lý phải có mốc đánh giá lại. Luôn đưa nextSteps để người dùng có thể duyệt thành lịch. Chỉ trả về JSON thuần, KHÔNG trả lời bằng markdown, KHÔNG in suy luận nội bộ, KHÔNG mô tả cách bạn tạo JSON và KHÔNG đưa ra chuỗi suy nghĩ. Chỉ dùng các trường: title, summary, assessment, risks[], checks[], nonChemical[], chemical[], weatherWindow, precautions[], confidence, nextSteps[]. chemical[] có product,active,dose,phi,why và chỉ có khi đủ dữ liệu xác minh. nextSteps[] có daysFromNow,kind,title,notes. Không chẩn đoán chắc chắn khi thiếu ảnh/triệu chứng.`;
 }
 async function generateAdvice(env, body){
   const p=body.plant||{}; const prompt={plant:{...p,crop_name:cropName(p.crop),stage_name:stageName(p.crop,p.stage)},observation:body.observation||'',weather:body.weather||{},inventory:(body.inventory||[]).filter(x=>Number(x.label_verified)===1),history:body.history||{},knowledge:body.knowledge||{}};
@@ -224,6 +226,29 @@ async function route(request, env){
   if(request.method==='OPTIONS') return new Response(null,{status:204,headers:corsHeaders(request.headers.get('Origin')||'*')});
   if(url.pathname==='/api/health' && request.method==='GET') return json({ok:true,db:!!env.DB,ai:!!(env.OPENROUTER_API_KEY||env.GROQ_API_KEY),telegram:!!(env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID),models:{text:env.OPENROUTER_MODEL||'openrouter/free',vision:env.OPENROUTER_VISION_MODEL||'openrouter/free',fallback:env.GROQ_MODEL||'llama-3.3-70b-versatile'}});
   if(url.pathname==='/api/automation/status' && request.method==='GET') return json({enabled:!!env.DB,telegram:!!(env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID),ai:!!(env.OPENROUTER_API_KEY||env.GROQ_API_KEY),crons:['0 * * * *','0 22 * * *']});
+  if(url.pathname==='/api/data' && request.method==='DELETE'){
+    if(!env.DB) return json({ok:false,local:true});
+    const stm=[
+      'DELETE FROM notification_log',
+      'DELETE FROM weather_snapshots',
+      'DELETE FROM observations',
+      'DELETE FROM tasks',
+      'DELETE FROM recommendations',
+      'DELETE FROM inventory',
+      'DELETE FROM plants',
+      'DELETE FROM kv'
+    ].map(sql=>env.DB.prepare(sql));
+    await env.DB.batch(stm);
+    return json({ok:true,cleared:['plants','inventory','recommendations','tasks','observations','weather_snapshots','notification_log','kv']});
+  }
+  if(url.pathname==='/api/data/plans' && request.method==='DELETE'){
+    if(!env.DB) return json({ok:false,local:true});
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM tasks'),
+      env.DB.prepare('DELETE FROM recommendations')
+    ]);
+    return json({ok:true,cleared:['tasks','recommendations']});
+  }
   if(url.pathname==='/api/data' && request.method==='GET') return json(await readAll(env));
   if(url.pathname==='/api/weather' && request.method==='GET'){const lat=Number(url.searchParams.get('lat')),lon=Number(url.searchParams.get('lon')); if(!Number.isFinite(lat)||!Number.isFinite(lon)) return json({error:'Thiếu lat/lon'},400); const w=await fetchWeather(lat,lon); return json(w);}
   if(url.pathname==='/api/advice' && request.method==='POST'){const b=await request.json(); try{return json(await generateAdvice(env,b));}catch(e){return json({error:e.message},503)}}

@@ -302,9 +302,9 @@ function calendarView(){
 }
 function settingsView(){
  return `<div class="section"><div class="card"><div class="section-title">Theo dõi 24/7</div><div class="note" style="margin-top:4px">Worker sẽ kiểm tra thời tiết mỗi giờ, nhắc việc/cập nhật cây và chạy tổng hợp AI hằng ngày. Telegram được gửi từ secret server-side.</div><div class="status-line" style="margin-top:12px"><span class="status-dot ${state.automation?.enabled?'on':'off'}"></span><span>${state.automation?.enabled?'Đã kết nối automation':'Chưa kết nối automation'}</span><span class="muted">${state.automation?.telegram?'Telegram OK':'Telegram chưa nối'}</span></div><div class="actions"><button class="btn primary" data-action="run-automation">▶ Chạy kiểm tra ngay</button><button class="btn secondary" data-action="test-telegram">Gửi tin thử</button></div></div></div>
- <div class="section"><div class="card"><div class="section-title">Trạng thái AI</div><div class="note" style="margin-top:4px">AI chạy server-side trên Cloudflare Worker. API key không nằm trong webapp.</div><div class="status-line" style="margin-top:12px"><span class="status-dot ${state.backend==='cloud'?'on':'off'}"></span><span>Worker: ${state.backend==='cloud'?'Đã kết nối':'Chưa kết nối'}</span><span class="muted">OpenRouter · Free Router</span></div><div class="actions"><button class="btn primary" data-action="test-ai">Kiểm tra AI</button></div></div></div>
+ <div class="section"><div class="card"><div class="section-title">Trạng thái AI</div><div class="note" style="margin-top:4px">AI chạy server-side trên Cloudflare Worker. API key không nằm trong webapp.</div><div class="status-line" style="margin-top:12px"><span class="status-dot ${state.backend==='cloud'?'on':'off'}"></span><span>Worker: ${state.backend==='cloud'?'Đã kết nối':'Chưa kết nối'}</span><span class="muted">Groq · Llama 3.3 70B → OpenRouter Free</span></div><div class="actions"><button class="btn primary" data-action="test-ai">Kiểm tra AI</button></div></div></div>
  <div class="section"><div class="card"><div class="section-title">Vật tư đã đối chiếu</div><div class="note" style="margin-top:4px">Chỉ vật tư đã đối chiếu nhãn mới được AI dùng để đề xuất liều/PHI cụ thể.</div><div class="actions"><button class="btn primary" data-action="add-inventory">＋ Thêm vật tư</button></div>${inventoryList()}</div></div>
- <div class="section"><div class="card"><div class="section-title">Dữ liệu</div><div class="actions"><button class="btn secondary" data-action="seed">Dữ liệu mẫu</button><button class="btn secondary" data-action="export">Xuất JSON</button><button class="btn danger" data-action="clear">Xóa dữ liệu máy</button></div></div></div>`;
+ <div class="section"><div class="card"><div class="section-title">Dữ liệu</div><div class="note" style="margin-top:4px">Dữ liệu thật nằm trên D1. Bạn có thể sao lưu trước khi xoá. Xoá toàn bộ sẽ đưa app về trạng thái trắng.</div><div class="actions"><button class="btn secondary" data-action="seed">Dữ liệu mẫu</button><button class="btn secondary" data-action="export">Xuất JSON</button><button class="btn secondary" data-action="clear-plans">Xóa lịch &amp; khuyến cáo</button><button class="btn danger" data-action="clear-all">Xóa toàn bộ dữ liệu</button></div></div></div>`;
 }
 function inventoryList(){return state.inventory.length?`<div class="list" style="margin-top:10px">${state.inventory.slice(0,8).map(x=>`<div class="item"><div class="item-title">${esc(x.name)}</div><div class="item-meta">${esc(x.active||'')} • ${esc(x.crop||'')} • ${x.label_verified?'Đã đối chiếu':'Chưa đối chiếu'}</div></div>`).join('')}</div>`:`<div class="empty" style="margin-top:10px">Chưa có vật tư.</div>`;}
 
@@ -428,7 +428,21 @@ $('#app').addEventListener('click',async e=>{
  else if(action==='test-telegram'){try{const r=await api('/api/notify/test',{method:'POST',body:JSON.stringify({})}); toast(r.ok?'Telegram đã gửi tin thử':'Telegram chưa cấu hình', r.ok?'success':'error');}catch(err){toast(`Telegram lỗi: ${err.message}`,'error');}}
  else if(action==='export'){const d={plants:state.plants,inventory:state.inventory,recs:state.recs,tasks:state.tasks};const u=URL.createObjectURL(new Blob([JSON.stringify(d,null,2)],{type:'application/json'}));const x=document.createElement('a');x.href=u;x.download='nong-vu-ai-backup.json';x.click();URL.revokeObjectURL(u);}
  else if(action==='seed'){seed();render();toast('Đã nạp dữ liệu mẫu','success');}
- else if(action==='clear'){if(confirm('Xoá dữ liệu local?')){state.plants=[];state.recs=[];state.tasks=[];state.inventory=[];persistLocal();render();toast('Đã xoá dữ liệu local');}}
+ else if(action==='clear-plans'){
+  if(confirm('Xóa toàn bộ lịch và khuyến cáo cũ? Cây và vật tư sẽ được giữ lại.')){
+    try{await api('/api/data/plans',{method:'DELETE'});}catch{}
+    state.recs=[]; state.tasks=[]; persistLocal(); await loadData(); render(); toast('Đã xóa lịch và khuyến cáo cũ','success');
+  }
+ }
+ else if(action==='clear-all'){
+  if(confirm('XÓA TOÀN BỘ dữ liệu cây, vật tư, lịch, khuyến cáo, quan sát và lịch sử thời tiết? Hành động này không thể hoàn tác.')){
+    const again=prompt('Nhập XOA để xác nhận:');
+    if(again==='XOA'){
+      try{await api('/api/data',{method:'DELETE'});}catch(err){toast(`Không xóa được dữ liệu cloud: ${err.message}`,'error'); return;}
+      state.plants=[];state.recs=[];state.tasks=[];state.inventory=[];state.weather=null;persistLocal();render();toast('Đã xóa toàn bộ dữ liệu','success');
+    }
+  }
+ }
  else if(action==='add-inventory')inventoryModal();
  else if(action==='close-modal')document.querySelector('.modal')?.remove();
 });
