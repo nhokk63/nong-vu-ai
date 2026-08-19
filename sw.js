@@ -1,4 +1,4 @@
-const VERSION='nongvu-ai-v22.0';
+const VERSION='nongvu-ai-v22.1';
 const CACHE=`${VERSION}-static`;
 const STATIC=['./','./index.html','./styles.css?v=37','./boot-guard.js?v=37','./app.js?v=37','./modal-fix.js?v=37','./needs-tab.js?v=37','./chemical-catalog.json?v=20260819','./manifest.json','./knowledge.json','./icon-192.png','./icon-512.png','./icon-180.png'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(c=>c.addAll(STATIC)).then(()=>self.skipWaiting()).catch(()=>self.skipWaiting())));
