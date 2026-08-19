@@ -277,7 +277,7 @@ function plantCards(n){
    <div class="plant-card-body">
      <div class="row"><div><div class="item-title">${esc(p.name||cropName(p.crop))}</div><div class="item-meta">${Number(p.count||0).toLocaleString('vi-VN')} cây • ${esc(p.area||0)} ha</div></div><span class="tag ${st.tone}">${st.label}</span></div>
      <div class="plant-stage">${esc(stageName(p.crop,p.stage))}</div>
-     <div class="actions"><button class="btn secondary" data-action="consult" data-id="${esc(p.id)}">Tư vấn</button><button class="btn ghost" data-action="update-plant" data-id="${esc(p.id)}">Cập nhật</button></div>
+     <div class="actions"><button class="btn secondary" data-action="consult" data-id="${esc(p.id)}">Tư vấn</button><button class="btn ghost" data-action="update-plant" data-id="${esc(p.id)}">Cập nhật</button><button class="btn danger" data-action="delete-plant" data-id="${esc(p.id)}">Xóa cây</button></div>
    </div>
  </div>`}).join('')}</div>`;
 }
@@ -306,12 +306,7 @@ function settingsView(){
  <div class="section"><div class="card"><div class="section-title">Vật tư đã đối chiếu</div><div class="note" style="margin-top:4px">Chỉ vật tư đã đối chiếu nhãn mới được AI dùng để đề xuất liều/PHI cụ thể.</div><div class="actions"><button class="btn primary" data-action="add-inventory">＋ Thêm vật tư</button></div>${inventoryList()}</div></div>
  <div class="section"><div class="card"><div class="section-title">Dữ liệu</div><div class="note" style="margin-top:4px">Dữ liệu thật nằm trên D1. Bạn có thể sao lưu trước khi xoá. Xoá toàn bộ sẽ đưa app về trạng thái trắng.</div><div class="actions"><button class="btn secondary" data-action="seed">Dữ liệu mẫu</button><button class="btn secondary" data-action="export">Xuất JSON</button><button class="btn secondary" data-action="clear-plans">Xóa lịch &amp; khuyến cáo</button><button class="btn danger" data-action="clear-all">Xóa toàn bộ dữ liệu</button></div></div></div>`;
 }
-function inventoryList(){return state.inventory.length?`<div class="list" style="margin-top:10px">${state.inventory.slice(0,8).map(x=>`<div class="item"><div class="item-title">${esc(x.name)}</div><div class="item-meta">${esc(x.active||'')} • ${esc(x.crop||'')} • ${x.label_verified?'Đã đối chiếu':'Chưa đối chiếu'}</div></div>`).join('')}</div>`:`<div class="empty" style="margin-top:10px">Chưa có vật tư.</div>`;}
-
-function modal(html){
- const e=document.createElement('div'); e.className='modal'; e.innerHTML=`<div class="sheet"><div class="handle"></div>${html}</div>`;
- e.addEventListener('click',x=>{if(x.target===e)e.remove();}); document.body.appendChild(e); return e;
-}
+function inventoryList(){return state.inventory.length?`<div class="list" style="margin-top:10px">${state.inventory.slice(0,8).map(x=>`<div class="item"><div class="row"><div><div class="item-title">${esc(x.name)}</div><div class="item-meta">${esc(x.active||'')} • ${esc(x.crop||'')} • ${x.label_verified?'Đã đối chiếu':'Chưa đối chiếu'}</div></div><button class="btn danger" data-action="delete-inventory" data-id="${esc(x.id)}">Xóa</button></div></div>`).join('')}</div>`:`<div class="empty" style="margin-top:10px">Chưa có vật tư.</div>`;}
 
 function addPlantModal(){
  const e=modal(`<h2>Thêm cây trồng</h2><div class="muted small">GPS sẽ tự lấy vị trí khi lưu.</div><div class="form" style="margin-top:14px"><label class="label">Loại cây</label><select id="f-crop" class="field"><option value="coffee">Cà phê</option><option value="pepper">Hồ tiêu</option><option value="areca">Cau</option></select><label class="label">Tên hiển thị</label><input id="f-name" class="field" placeholder="VD: Cà phê 2026"><label class="label">Số lượng cây</label><input id="f-count" class="field" type="number" inputmode="numeric" value="1000"><label class="label">Diện tích (ha)</label><input id="f-area" class="field" type="number" step="0.01" value="1"><label class="label">Giai đoạn</label><select id="f-stage" class="field"></select><label class="label">Mùa vụ</label><input id="f-season" class="field" value="2026/2027"><div class="actions"><button class="btn secondary" data-close="1">Huỷ</button><button class="btn primary" data-save-plant="1">Lưu + lấy GPS</button></div></div>`);
@@ -369,7 +364,7 @@ async function consult(idPlant){
       toast(`AI cloud lỗi: ${err.message}`,'error');
       return;
     }
-    const rec={id:id(),plant_id:p.id,title:r.title||'Khuyến cáo AI',body:r.body||formatAdvice(r),payload:JSON.stringify(r),status:'PENDING',created_at:now(),source:'AI cloud (OpenRouter)'};
+    const rec={id:id(),plant_id:p.id,title:r.title||'Khuyến cáo AI',body:r.body||formatAdvice(r),payload:JSON.stringify(r),status:'PENDING',created_at:now(),source:'AI cloud (Groq/OpenRouter)'};
     state.recs.unshift(rec); persistLocal(); try{await api('/api/recommendations',{method:'POST',body:JSON.stringify(rec)});state.backend='cloud';}catch{state.backend='local';}
     out.innerHTML=`<div class="card advice" style="margin-top:12px"><div class="pill green">AI CLOUD</div><div class="item-title" style="margin-top:8px">${esc(rec.title)}</div><div class="small" style="white-space:pre-wrap;line-height:1.5;margin-top:8px">${esc(rec.body)}</div><div class="actions"><button class="btn success" data-action="approve-rec" data-id="${esc(rec.id)}">✓ Duyệt → lịch</button><button class="btn secondary" data-action="close-modal">Đóng</button></div></div>`;
     toast('AI đã tạo khuyến cáo','success');
@@ -387,7 +382,7 @@ async function handleAction(action,ident){
  if(r){
   if(action==='approve-rec'){r.status='APPROVED'; let meta={}; try{meta=JSON.parse(r.payload||'{}')}catch{}; const steps=Array.isArray(meta.nextSteps)&&meta.nextSteps.length?meta.nextSteps:[{daysFromNow:1,title:r.title,kind:'FOLLOW_UP',notes:r.body}]; for(const step of steps.slice(0,8)){const days=Math.max(0,Number(step.daysFromNow)||0); state.tasks.unshift({id:id(),plant_id:r.plant_id,rec_id:r.id,kind:step.kind||'FOLLOW_UP',title:step.title||r.title,scheduled_at:new Date(Date.now()+days*86400000).toISOString(),status:'PLANNED',notes:step.notes||r.body,created_at:now(),meta:JSON.stringify(step)});} await saveChanges();render();toast(`Đã duyệt và tạo ${steps.slice(0,8).length} mốc lịch`,'success');}
   else if(action==='postpone-rec'){r.status='POSTPONED';await saveChanges();render();toast('Đã hoãn');}
-  else if(action==='reject-rec'){try{await api(`/api/recommendations/${encodeURIComponent(r.id)}`,{method:'DELETE'});}catch{} state.recs=state.recs.filter(x=>x.id!==r.id);persistLocal();render();toast('Đã từ chối và xoá khỏi danh sách');}
+  else if(action==='reject-rec'){try{const out=await api(`/api/recommendations/${encodeURIComponent(r.id)}`,{method:'DELETE'});if(!out.ok)throw new Error('Cloud không xác nhận xóa');}catch(err){toast(`Không xóa được khuyến cáo: ${err.message}`,'error');return;} state.recs=state.recs.filter(x=>x.id!==r.id);persistLocal();render();toast('Đã từ chối và xoá khỏi danh sách');}
  }
  const t=state.tasks.find(x=>x.id===ident);
  if(t){if(action==='done-task'){t.status='DONE'; t.completed_at=now();}else if(action==='postpone-task'){t.status='POSTPONED';} await saveChanges(); render(); toast(t.status==='DONE'?'Đã ghi nhận hoàn thành':'Đã hoãn');}
@@ -430,18 +425,30 @@ $('#app').addEventListener('click',async e=>{
  else if(action==='seed'){seed();render();toast('Đã nạp dữ liệu mẫu','success');}
  else if(action==='clear-plans'){
   if(confirm('Xóa toàn bộ lịch và khuyến cáo cũ? Cây và vật tư sẽ được giữ lại.')){
-    try{await api('/api/data/plans',{method:'DELETE'});}catch{}
-    state.recs=[]; state.tasks=[]; persistLocal(); await loadData(); render(); toast('Đã xóa lịch và khuyến cáo cũ','success');
+    try{const out=await api('/api/data/plans',{method:'DELETE'}); if(!out.ok)throw new Error('Cloud không xác nhận xóa');
+      state.recs=[]; state.tasks=[]; localStorage.removeItem('nv_recs'); localStorage.removeItem('nv_tasks'); persistLocal(); await loadData(); render(); toast('Đã xóa sạch lịch và khuyến cáo cũ','success');
+    }catch(err){toast(`Không xóa được lịch/khuyến cáo: ${err.message}`,'error');}
   }
  }
  else if(action==='clear-all'){
-  if(confirm('XÓA TOÀN BỘ dữ liệu cây, vật tư, lịch, khuyến cáo, quan sát và lịch sử thời tiết? Hành động này không thể hoàn tác.')){
+  if(confirm('XÓA TOÀN BỘ dữ liệu trên D1 và điện thoại? Cây, vật tư, lịch, khuyến cáo, quan sát, thời tiết và nhật ký thông báo sẽ bị xóa.')){
     const again=prompt('Nhập XOA để xác nhận:');
     if(again==='XOA'){
-      try{await api('/api/data',{method:'DELETE'});}catch(err){toast(`Không xóa được dữ liệu cloud: ${err.message}`,'error'); return;}
-      state.plants=[];state.recs=[];state.tasks=[];state.inventory=[];state.weather=null;persistLocal();render();toast('Đã xóa toàn bộ dữ liệu','success');
+      try{const out=await api('/api/data',{method:'DELETE'}); if(!out.ok)throw new Error('Cloud không xác nhận xóa');
+        state.plants=[];state.recs=[];state.tasks=[];state.inventory=[];state.weather=null;['nv_plants','nv_recs','nv_tasks','nv_inventory'].forEach(k=>localStorage.removeItem(k)); persistLocal(); await loadData(); render(); toast('Đã xóa TOÀN BỘ dữ liệu','success');
+      }catch(err){toast(`Không xóa được dữ liệu: ${err.message}`,'error');}
     }
   }
+ }
+ else if(action==='delete-plant'){
+   const p=state.plants.find(x=>x.id===a.dataset.id); if(!p)return;
+   if(!confirm(`Xóa cây “${p.name||cropName(p.crop)}” và toàn bộ lịch/khuyến cáo/quan sát/thời tiết liên quan?`))return;
+   try{const out=await api(`/api/plants/${encodeURIComponent(p.id)}`,{method:'DELETE'}); if(!out.ok)throw new Error('Cloud không xác nhận xóa'); state.plants=state.plants.filter(x=>x.id!==p.id); state.recs=state.recs.filter(x=>x.plant_id!==p.id); state.tasks=state.tasks.filter(x=>x.plant_id!==p.id); persistLocal(); await loadData(); render(); toast('Đã xóa cây và dữ liệu liên quan','success');}catch(err){toast(`Không xóa được cây: ${err.message}`,'error');}
+ }
+ else if(action==='delete-inventory'){
+   const i=state.inventory.find(x=>x.id===a.dataset.id); if(!i)return;
+   if(!confirm(`Xóa vật tư “${i.name}”?`))return;
+   try{const out=await api(`/api/inventory/${encodeURIComponent(i.id)}`,{method:'DELETE'}); if(!out.ok)throw new Error('Cloud không xác nhận xóa'); state.inventory=state.inventory.filter(x=>x.id!==i.id); persistLocal(); await loadData(); render(); toast('Đã xóa vật tư','success');}catch(err){toast(`Không xóa được vật tư: ${err.message}`,'error');}
  }
  else if(action==='add-inventory')inventoryModal();
  else if(action==='close-modal')document.querySelector('.modal')?.remove();
