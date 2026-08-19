@@ -65,7 +65,7 @@ async function callChatProvider(env, system, user, image){
         response_format:{type:'json_object'}
       };
       const ctrl=new AbortController();
-      const timer=setTimeout(()=>ctrl.abort(),10000);
+      const timer=setTimeout(()=>ctrl.abort(),60000);
       let r;
       try{
         r=await fetch('https://api.groq.com/openai/v1/chat/completions',{
@@ -94,7 +94,7 @@ async function callChatProvider(env, system, user, image){
         : (env.OPENROUTER_MODEL||'openrouter/free');
       const payload={model,messages,temperature:0.15,max_tokens:650};
       const ctrl=new AbortController();
-      const timer=setTimeout(()=>ctrl.abort(),12000);
+      const timer=setTimeout(()=>ctrl.abort(),90000);
       let r;
       try{
         r=await fetch('https://openrouter.ai/api/v1/chat/completions',{
@@ -154,6 +154,16 @@ function taskText(t, p){
   const when=t.scheduled_at?new Date(t.scheduled_at).toLocaleString('vi-VN',{timeZone:'Asia/Ho_Chi_Minh',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'';
   return `• ${p?.name||cropName(p?.crop)} — ${t.title||t.kind} — ${when}`;
 }
+function dailySystem(){return `Bạn là hệ thống điều phối Nông Vụ AI hằng ngày tại Việt Nam. Hãy đánh giá từng cây dựa trên giai đoạn, thời tiết hiện tại/dự báo, quan sát, lịch sử và vật tư đã đối chiếu. Ưu tiên IPM và biện pháp không hóa học. Không tự bịa tên thuốc/hoạt chất/liều/PHI; chỉ dùng chemical[] khi inventory label_verified=1 và phù hợp cây/đối tượng. Không tự tạo lịch cứng cho hóa chất; mọi bước phải có mốc kiểm tra lại. Chỉ trả JSON thuần, không markdown, không suy luận nội bộ. Schema: {dailySummary:string, alerts:[{plantId,level,title,message}], recommendations:[{plantId,title,summary,assessment,risks,checks,nonChemical,chemical,weatherWindow,precautions,confidence,nextSteps}]}. nextSteps[] gồm {daysFromNow,kind,title,notes}.`}
+async function saveKv(env,k,v){if(!env.DB)return;await env.DB.prepare('INSERT OR REPLACE INTO kv(k,v) VALUES(?,?)').bind(k,String(v)).run()}
+async function getKv(env,k){if(!env.DB)return null;const r=await env.DB.prepare('SELECT v FROM kv WHERE k=?').bind(k).first();return r?.v??null}
+async function telegramSend(env,chatId,message,replyMarkup=null){if(!env.TELEGRAM_BOT_TOKEN)return {ok:false};const payload={chat_id:chatId||env.TELEGRAM_CHAT_ID,text:message,disable_web_page_preview:true};if(replyMarkup)payload.reply_markup=replyMarkup;const r=await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const d=await r.json().catch(()=>({}));if(!r.ok||!d.ok)throw new Error(d.description||`Telegram ${r.status}`);return d}
+async function telegramAnswer(env,callbackId,text){if(!env.TELEGRAM_BOT_TOKEN)return;await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/answerCallbackQuery`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({callback_query_id:callbackId,text,show_alert:false})}).catch(()=>{})}
+async function telegramEdit(env,chatId,messageId,text){if(!env.TELEGRAM_BOT_TOKEN)return;await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/editMessageText`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:chatId,message_id:messageId,text,disable_web_page_preview:true})}).catch(()=>{})}
+async function approveRecommendation(env,recId){if(!env.DB)throw new Error('D1 chưa được binding');const rec=await env.DB.prepare('SELECT * FROM recommendations WHERE id=?').bind(recId).first();if(!rec)throw new Error('Không tìm thấy khuyến cáo');if(rec.status!=='PENDING')return {ok:true,already:true};const meta=parseJson(rec.payload,{});const steps=Array.isArray(meta.nextSteps)&&meta.nextSteps.length?meta.nextSteps:[{daysFromNow:1,kind:'FOLLOW_UP',title:rec.title,notes:rec.body}];const nowMs=Date.now();const stm=[env.DB.prepare("UPDATE recommendations SET status='APPROVED', updated_at=? WHERE id=?").bind(iso(),recId)];const created=[];for(const step of steps.slice(0,8)){const days=Math.max(0,Number(step.daysFromNow)||0);const tid=crypto.randomUUID();const scheduled=new Date(nowMs+days*86400000).toISOString();created.push({id:tid,scheduled_at:scheduled,title:step.title||rec.title});stm.push(env.DB.prepare(`INSERT OR REPLACE INTO tasks(id,plant_id,rec_id,kind,title,scheduled_at,status,notes,meta,completed_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(tid,rec.plant_id,recId,step.kind||'FOLLOW_UP',step.title||rec.title,scheduled,'PLANNED',step.notes||rec.body,JSON.stringify(step),null,iso()))}await dbBatch(env,stm);return {ok:true,created}}
+async function rejectRecommendation(env,recId){if(!env.DB)throw new Error('D1 chưa được binding');await env.DB.prepare('DELETE FROM recommendations WHERE id=?').bind(recId).run();await env.DB.prepare("DELETE FROM tasks WHERE rec_id=? AND status!='DONE'").bind(recId).run();return {ok:true}}
+async function pollTelegram(env){if(!env.TELEGRAM_BOT_TOKEN||!env.TELEGRAM_CHAT_ID||!env.DB)return {processed:0};const offset=Number(await getKv(env,'telegram_update_offset')||0);const u=`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getUpdates?timeout=0&allowed_updates=${encodeURIComponent(JSON.stringify(['callback_query','message']))}${offset?`&offset=${offset}`:''}`;const r=await fetch(u);const d=await r.json().catch(()=>({}));if(!r.ok||!d.ok)return {processed:0};let processed=0,next=offset;for(const upd of d.result||[]){next=Math.max(next,Number(upd.update_id)+1);processed++;const cb=upd.callback_query;if(cb){const chatId=String(cb.message?.chat?.id||'');if(chatId!==String(env.TELEGRAM_CHAT_ID))continue;const data=String(cb.data||'');try{if(data.startsWith('approve:')){const id=data.slice(8);const out=await approveRecommendation(env,id);await telegramAnswer(env,cb.id,out.already?'Đã xử lý trước đó':'Đã duyệt và tạo lịch');await telegramEdit(env,chatId,cb.message.message_id,`✅ ĐÃ DUYỆT\n\n${cb.message.text||'Khuyến cáo'}\n\n${out.created?.length||0} mốc lịch đã được tạo. Hãy xem Lịch trong Nông Vụ AI và cập nhật cây sau mỗi lần thực hiện.`)}else if(data.startsWith('reject:')){const id=data.slice(7);await rejectRecommendation(env,id);await telegramAnswer(env,cb.id,'Đã từ chối và xóa khuyến cáo');await telegramEdit(env,chatId,cb.message.message_id,`❌ ĐÃ TỪ CHỐI\n\n${cb.message.text||'Khuyến cáo'}\n\nKhuyến cáo và các task chưa hoàn thành liên quan đã được xóa.`)}}catch(e){await telegramAnswer(env,cb.id,e.message||'Không xử lý được')}continue}}if(next>offset)await saveKv(env,'telegram_update_offset',next);return {processed}}
+
 async function runHourly(env){
   if(!env.DB) return {created:0,notifications:0,reason:'no-db'};
   const data=await readAll(env); let notifications=0;
@@ -187,45 +197,14 @@ async function runHourly(env){
   return {created:0,notifications};
 }
 
-async function runDaily(env){
-  if(!env.DB) return {created:0,notifications:0,reason:'no-db'};
-  const data=await readAll(env); let created=0, notifications=0;
-  const plants=[];
-  for(const p of data.plants){
-    if(!p.lat || !p.lon) continue;
-    try{
-      const w=await fetchWeather(p.lat,p.lon);
-      plants.push({plant:p,weather:w,history:{recs:data.recs.filter(r=>r.plant_id===p.id).slice(-8),tasks:data.tasks.filter(t=>t.plant_id===p.id).slice(-8),observations:data.observations.filter(o=>o.plant_id===p.id).slice(-5)}});
-    }catch{plants.push({plant:p,weather:null,history:{recs:[],tasks:[],observations:[]}})}
-  }
-  if((env.OPENROUTER_API_KEY || env.GROQ_API_KEY) && plants.length){
-    const prompt={date:new Date().toISOString(),plants,inventory:data.inventory.filter(x=>Number(x.label_verified)===1)};
-    const system=`Bạn là hệ thống điều phối nông vụ hằng ngày. Dựa trên từng cây, giai đoạn, thời tiết, lịch sử và vật tư đã đối chiếu. Không tự kê thuốc chưa xác minh. Trả JSON: {dailySummary:string, alerts:[{plantId,level,title,message}], recommendations:[{plantId,title,summary,risks,checks,nonChemical,chemical,weatherWindow,precautions,confidence,nextSteps}]}. recommendations là khuyến cáo chờ người dùng duyệt, không phải lệnh.`;
-    try{
-      const out=await callOpenAI(env,system,`Tạo đánh giá hằng ngày cho dữ liệu sau: ${JSON.stringify(prompt)}`);
-      for(const a of out.alerts||[]){
-        const fp=`ai-alert:${a.plantId}:${new Date().toISOString().slice(0,10)}:${a.title}`;
-        const p=data.plants.find(x=>x.id===a.plantId); const msg=`${a.level==='red'?'🚨':a.level==='orange'?'⚠️':'🌱'} ${a.title}\n${p?.name||cropName(p?.crop)}\n\n${a.message}`;
-        if(await notifyOnce(env,fp,msg)) notifications++;
-      }
-      for(const a of out.recommendations||[]){
-        const rec={id:crypto.randomUUID(),plant_id:a.plantId,title:a.title||'Khuyến cáo AI hằng ngày',body:a.summary||'',payload:JSON.stringify(a),status:'PENDING',source:'AI DAILY',created_at:iso(),updated_at:iso()};
-        await saveRecommendation(env,rec); created++;
-      }
-      if(out.dailySummary){const fp=`digest:${new Date().toISOString().slice(0,10)}`; if(await notifyOnce(env,fp,`🌱 NÔNG VỤ AI — TỔNG HỢP HÔM NAY\n\n${out.dailySummary}`)) notifications++;}
-    }catch(err){
-      const fp=`ai-error:${new Date().toISOString().slice(0,10)}`; if(await notifyOnce(env,fp,`⚠️ Nông Vụ AI\nAI tự động hôm nay chưa chạy được: ${err.message}`)) notifications++;
-    }
-  }
-  return {created,notifications};
-}
+async function runDaily(env,forceDaily=false){if(!env.DB)return {created:0,notifications:0,reason:'no-db'};const day=new Date().toISOString().slice(0,10);const guard=await getKv(env,'daily_ai_run_date');if(!forceDaily&&guard===day)return {created:0,notifications:0,skipped:true};const data=await readAll(env);let created=0,notifications=0;const plants=[];for(const p of data.plants){if(!p.lat||!p.lon)continue;try{const w=await fetchWeather(p.lat,p.lon);plants.push({plant:p,weather:w,history:{recs:data.recs.filter(r=>r.plant_id===p.id).slice(-8),tasks:data.tasks.filter(t=>t.plant_id===p.id).slice(-8),observations:data.observations.filter(o=>o.plant_id===p.id).slice(-5)}})}catch{plants.push({plant:p,weather:null,history:{recs:[],tasks:[],observations:[]}})}}if(!plants.length||!(env.GROQ_API_KEY||env.OPENROUTER_API_KEY))return {created:0,notifications:0,reason:'no-plants-or-ai'};const prompt={date:new Date().toISOString(),plants,inventory:data.inventory.filter(x=>Number(x.label_verified)===1)};try{const out=await callChatProvider(env,dailySystem(),`Tạo đánh giá hằng ngày cho dữ liệu sau. Chỉ trả JSON: ${JSON.stringify(prompt)}`);for(const a of out.alerts||[]){const fp=`ai-alert:${a.plantId}:${day}:${a.title}`;const p=data.plants.find(x=>x.id===a.plantId);const msg=`${a.level==='red'?'🚨':a.level==='orange'?'⚠️':'🌱'} ${a.title}\n${p?.name||cropName(p?.crop)}\n\n${a.message}`;if(await notifyOnce(env,fp,msg))notifications++}for(const a of out.recommendations||[]){if(!a.plantId)continue;const rec={id:crypto.randomUUID(),plant_id:a.plantId,title:a.title||'Khuyến cáo AI hằng ngày',body:a.summary||'',payload:JSON.stringify(a),status:'PENDING',source:'AI DAILY',created_at:iso(),updated_at:iso()};await saveRecommendation(env,rec);created++;if(env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID){const p=data.plants.find(x=>x.id===a.plantId);const lines=[`🤖 KHUYẾN CÁO MỚI — ${p?.name||cropName(p?.crop)}`,'',rec.title,'',a.summary||'','',`⚠️ Đây là đề xuất chờ mày xác nhận. Chưa tạo lịch và chưa coi là lệnh xử lý.`].join('\n');const kb={inline_keyboard:[[{text:'✅ DUYỆT → LÊN LỊCH',callback_data:`approve:${rec.id}`},{text:'❌ TỪ CHỐI → XÓA',callback_data:`reject:${rec.id}`}]]};await telegramSend(env,env.TELEGRAM_CHAT_ID,lines,kb)}}if(out.dailySummary&&env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID){const fp=`digest:${day}`;if(await notifyOnce(env,fp,`🌱 NÔNG VỤ AI — TỔNG HỢP HÔM NAY\n\n${out.dailySummary}`))notifications++}await saveKv(env,'daily_ai_run_date',day)}catch(err){const fp=`ai-error:${day}`;if(await notifyOnce(env,fp,`⚠️ Nông Vụ AI\nAI tự động hôm nay chưa chạy được: ${err.message}`))notifications++}return {created,notifications}}
 
 async function route(request, env){
   const url=new URL(request.url);
   const auth=needAuth(request,env); if(auth) return auth;
   if(request.method==='OPTIONS') return new Response(null,{status:204,headers:corsHeaders(request.headers.get('Origin')||'*')});
-  if(url.pathname==='/api/health' && request.method==='GET') return json({ok:true,db:!!env.DB,ai:!!(env.OPENROUTER_API_KEY||env.GROQ_API_KEY),telegram:!!(env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID),models:{text:env.OPENROUTER_MODEL||'openrouter/free',vision:env.OPENROUTER_VISION_MODEL||'openrouter/free',fallback:env.GROQ_MODEL||'llama-3.3-70b-versatile'}});
-  if(url.pathname==='/api/automation/status' && request.method==='GET') return json({enabled:!!env.DB,telegram:!!(env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID),ai:!!(env.OPENROUTER_API_KEY||env.GROQ_API_KEY),crons:['0 * * * *','0 22 * * *']});
+  if(url.pathname==='/api/health' && request.method==='GET') return json({ok:true,db:!!env.DB,ai:!!(env.OPENROUTER_API_KEY||env.GROQ_API_KEY),providers:{groq:!!env.GROQ_API_KEY,openrouter:!!env.OPENROUTER_API_KEY},primary:env.GROQ_API_KEY?'groq':'openrouter',telegram:!!(env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID),models:{text:env.GROQ_MODEL||'llama-3.3-70b-versatile',vision:env.OPENROUTER_VISION_MODEL||'openrouter/free',fallback:env.OPENROUTER_MODEL||'openrouter/free'}});
+  if(url.pathname==='/api/automation/status' && request.method==='GET') return json({enabled:!!env.DB,telegram:!!(env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID),ai:!!(env.OPENROUTER_API_KEY||env.GROQ_API_KEY),crons:['*/5 * * * *','0 22 * * *']});
   if(url.pathname==='/api/data' && request.method==='DELETE'){
     if(!env.DB) return json({ok:false,local:true});
     const stm=[
@@ -291,6 +270,7 @@ export default {
   },
   async scheduled(controller, env, ctx){
     try{
+      await pollTelegram(env);
       if(controller.cron==='0 22 * * *') await runDaily(env);
       else await runHourly(env);
     }catch(e){console.error('scheduled error',e);}
