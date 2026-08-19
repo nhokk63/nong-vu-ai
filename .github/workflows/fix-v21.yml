@@ -1,0 +1,24 @@
+name: Apply V21 bug fixes
+on:
+  push:
+    paths:
+      - '_v21_fix_trigger'
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply fixes
+        run: python _v21_fix.py
+      - name: Commit fixes and cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f _v21_fix.py _v21_fix_trigger .github/workflows/fix-v21.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add _worker.js app.js _v21_fix.py _v21_fix_trigger .github/workflows/fix-v21.yml
+          git commit -m 'Fix V21 delete CORS and AI consult actions'
+          git push
