@@ -1,6 +1,6 @@
-const VERSION='nongvu-ai-v21.4';
+const VERSION='nongvu-ai-v21.5';
 const CACHE=`${VERSION}-static`;
-const STATIC=['./','./index.html','./styles.css?v=34','./boot-guard.js?v=34','./app.js?v=34','./modal-fix.js?v=34','./need-materials.js?v=34','./ui-clean.js?v=34','./chemical-catalog.json?v=20260819','./manifest.json','./knowledge.json','./icon-192.png','./icon-512.png','./icon-180.png'];
+const STATIC=['./','./index.html','./styles.css?v=36','./boot-guard.js?v=36','./app.js?v=36','./modal-fix.js?v=36','./need-materials.js?v=36','./ui-clean.js?v=36','./chemical-catalog.json?v=20260819','./manifest.json','./knowledge.json','./icon-192.png','./icon-512.png','./icon-180.png'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(c=>c.addAll(STATIC)).then(()=>self.skipWaiting()).catch(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',event=>{
