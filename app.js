@@ -407,7 +407,8 @@ function inventoryModal(){
  e.addEventListener('click',async x=>{if(x.target.closest('[data-close]'))return e.remove();if(!x.target.closest('[data-save-inv]'))return;const i={id:id(),name:$('#i-name',e).value,active:$('#i-active',e).value,crop:$('#i-crop',e).value,targets:$('#i-targets',e).value,dose:$('#i-dose',e).value,phi:$('#i-phi',e).value,label_verified:$('#i-verified',e).checked?1:0,stock:0,unit:'đv',created_at:now()};state.inventory.unshift(i);await saveChanges();e.remove();render();toast('Đã thêm vật tư','success');});
 }
 
-$('#app').addEventListener('click',async e=>{
+document.addEventListener('click',async e=>{
+ if(!e.target.closest('#app')) return;
  const tab=e.target.closest('[data-tab]'); if(tab){location.hash=tab.dataset.tab;return;}
  const a=e.target.closest('[data-action]'); if(!a)return; const action=a.dataset.action;
  if(action==='add-plant')addPlantModal();
@@ -415,7 +416,7 @@ $('#app').addEventListener('click',async e=>{
  else if(action==='back-home'){state.tab='home';location.hash='home';render();}
  else if(action==='quick-advice'){state.tab='ai';location.hash='ai';render();}
  else if(action==='refresh-weather') refreshWeather();
- else if(action==='consult')consult(a.dataset.id);
+ else if(action==='consult'){ toast('Đang mở AI tư vấn…'); consult(a.dataset.id); }
  else if(action==='update-plant')updatePlant(a.dataset.id);
  else if(['approve-rec','postpone-rec','reject-rec','done-task','postpone-task'].includes(action))handleAction(action,a.dataset.id);
  else if(action==='test-ai'){try{const h=await api('/api/health');toast(`Backend OK • AI: ${h.ai?'sẵn sàng':'chưa cấu hình'} • DB: ${h.db?'OK':'chưa nối'}`,'success');}catch(err){toast(`Chưa kết nối backend: ${err.message}`,'error');}}

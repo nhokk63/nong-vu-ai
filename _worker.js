@@ -1,4 +1,4 @@
-const corsHeaders = (origin='*') => ({'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Headers':'Content-Type, X-App-Token, Authorization', 'Access-Control-Allow-Methods':'GET,POST,OPTIONS'});
+const corsHeaders = (origin='*') => ({'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Headers':'Content-Type, X-App-Token, Authorization', 'Access-Control-Allow-Methods':'GET,POST,DELETE,OPTIONS'});
 const json = (data, status=200, extra={}) => new Response(JSON.stringify(data), {status, headers:{'Content-Type':'application/json; charset=utf-8', 'Cache-Control':'no-store', ...corsHeaders('*'), ...extra}});
 const text = (data, status=200, extra={}) => new Response(data,{status,headers:{'Content-Type':'text/plain; charset=utf-8',...extra}});
 
@@ -234,7 +234,27 @@ async function route(request, env){
   if(url.pathname.startsWith('/api/recommendations/') && request.method==='DELETE'){const rid=decodeURIComponent(url.pathname.split('/').pop()); if(!env.DB) return json({ok:false,local:true}); await env.DB.prepare(`DELETE FROM recommendations WHERE id=?`).bind(rid).run(); return json({ok:true});}
   if(url.pathname.startsWith('/api/task-status/') && request.method==='POST'){const tid=decodeURIComponent(url.pathname.split('/').pop()); const b=await request.json().catch(()=>({})); if(!env.DB) return json({ok:false,local:true}); if(b.offsetDays){const row=await env.DB.prepare(`SELECT scheduled_at FROM tasks WHERE id=?`).bind(tid).first(); if(!row?.scheduled_at)return json({error:'Task chưa có thời gian'},400); const next=new Date(new Date(row.scheduled_at).getTime()+Number(b.offsetDays)*86400000).toISOString(); await env.DB.prepare(`UPDATE tasks SET scheduled_at=?,status=? WHERE id=?`).bind(next,b.status||'PLANNED',tid).run();}else{await env.DB.prepare(`UPDATE tasks SET status=?,completed_at=? WHERE id=?`).bind(b.status||'PLANNED',b.status==='DONE'?iso():null,tid).run();} return json({ok:true});}
   if(url.pathname==='/api/recommendations' && request.method==='POST'){const rec=await request.json(); await saveRecommendation(env,rec); return json({ok:true});}
+  if(url.pathname.startsWith('/api/plants/') && request.method==='DELETE'){
+    const id=decodeURIComponent(url.pathname.split('/').pop()||'');
+    if(!id) return json({error:'Thiếu plant id'},400);
+    if(!env.DB) return json({ok:false,local:true});
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM tasks WHERE plant_id=?').bind(id),
+      env.DB.prepare('DELETE FROM recommendations WHERE plant_id=?').bind(id),
+      env.DB.prepare('DELETE FROM observations WHERE plant_id=?').bind(id),
+      env.DB.prepare('DELETE FROM weather_snapshots WHERE plant_id=?').bind(id),
+      env.DB.prepare('DELETE FROM plants WHERE id=?').bind(id)
+    ]);
+    return json({ok:true,deleted:id});
+  }
   if(url.pathname==='/api/plants' && request.method==='POST'){const p=await request.json(); if(!env.DB) return json({ok:false,local:true}); await env.DB.prepare(`INSERT OR REPLACE INTO plants(id,crop,name,count,area,stage,season,lat,lon,last_check_at,last_observation,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(p.id,p.crop,p.name||cropName(p.crop),p.count||0,p.area||0,p.stage||'',p.season||'',p.lat||null,p.lon||null,p.last_check_at||null,p.last_observation||null,p.created_at||iso(),p.updated_at||iso()).run(); return json({ok:true});}
+  if(url.pathname.startsWith('/api/inventory/') && request.method==='DELETE'){
+    const id=decodeURIComponent(url.pathname.split('/').pop()||'');
+    if(!id) return json({error:'Thiếu inventory id'},400);
+    if(!env.DB) return json({ok:false,local:true});
+    await env.DB.prepare('DELETE FROM inventory WHERE id=?').bind(id).run();
+    return json({ok:true,deleted:id});
+  }
   if(url.pathname==='/api/sync' && request.method==='POST'){const b=await request.json(); if(!env.DB) return json({ok:false,local:true}); const stm=[]; for(const p of b.plants||[]) stm.push(env.DB.prepare(`INSERT OR REPLACE INTO plants(id,crop,name,count,area,stage,season,lat,lon,last_check_at,last_observation,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(p.id,p.crop,p.name||cropName(p.crop),p.count||0,p.area||0,p.stage||'',p.season||'',p.lat||null,p.lon||null,p.last_check_at||null,p.last_observation||null,p.created_at||iso(),p.updated_at||iso())); for(const i of b.inventory||[]) stm.push(env.DB.prepare(`INSERT OR REPLACE INTO inventory(id,name,active,crop,targets,label_verified,dose,phi,stock,unit,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(i.id,i.name||'',i.active||'',i.crop||'',i.targets||'',i.label_verified?1:0,i.dose||'',i.phi||'',i.stock||0,i.unit||'đv',i.created_at||iso())); for(const r of b.recs||[]) stm.push(env.DB.prepare(`INSERT OR REPLACE INTO recommendations(id,plant_id,title,body,payload,status,source,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`).bind(r.id,r.plant_id,r.title||'',r.body||'',r.payload||'',r.status||'PENDING',r.source||'LOCAL',r.created_at||iso(),iso())); for(const t of b.tasks||[]) stm.push(env.DB.prepare(`INSERT OR REPLACE INTO tasks(id,plant_id,rec_id,kind,title,scheduled_at,status,notes,meta,completed_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(t.id,t.plant_id||null,t.rec_id||null,t.kind||'',t.title||'',t.scheduled_at||null,t.status||'PLANNED',t.notes||'',t.meta||'',t.completed_at||null,t.created_at||iso())); await dbBatch(env,stm); return json({ok:true});}
   if(url.pathname==='/api/automation/run' && request.method==='POST'){const h=await runHourly(env); const d=await runDaily(env); return json({ok:true,created:(h.created||0)+(d.created||0),notifications:(h.notifications||0)+(d.notifications||0),status:{enabled:!!env.DB,telegram:!!(env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID),ai:!!(env.OPENROUTER_API_KEY||env.GROQ_API_KEY)}});}
   if(url.pathname.startsWith('/api/recommendations/') && request.method==='DELETE'){
