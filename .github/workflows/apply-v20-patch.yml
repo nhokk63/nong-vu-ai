@@ -1,0 +1,24 @@
+name: Apply V20 patch
+on:
+  push:
+    paths:
+      - '_v20patchtrigger'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch Worker to V20
+        run: python _v20patch.py
+      - name: Commit patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f _v20patch.py _v20patchtrigger
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add _worker.js _v20patch.py _v20patchtrigger
+          git commit -m 'Apply Nông Vụ AI v20 PRO Worker' || exit 0
+          git push
