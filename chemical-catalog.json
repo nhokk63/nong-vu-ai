@@ -1,0 +1,35 @@
+{
+  "version": "2026-08-19",
+  "status": "REFERENCE_ONLY",
+  "sources": [
+    {
+      "title": "Thông tư 75/2025/TT-BNNMT",
+      "effective": "2026-02-10",
+      "url": "https://vbpl.vn/TW/Pages/vbpq-toanvan.aspx?ItemID=186344"
+    },
+    {
+      "title": "Thông tư 28/2026/TT-BNNMT sửa đổi, bổ sung Thông tư 75/2025/TT-BNNMT",
+      "effective": "2026-06-30",
+      "url": "https://ppd.gov.vn/van-ban-chinh-sach/thong-tu-282026tt-bnnmt-ngay-3062026-sua-doi--bo-sung-thong-tu-so-752025tt-bnnmt.html"
+    }
+  ],
+  "rules": {
+    "dose": "CHỈ LẤY TỪ NHÃN THỰC TẾ",
+    "phi": "CHỈ LẤY TỪ NHÃN THỰC TẾ",
+    "tank_mix": "KHÔNG TỰ SUY DIỄN; CHỈ HIỂN THỊ KHI CÓ NGUỒN/ NHÃN XÁC NHẬN",
+    "efficacy_window": "CHỈ HIỂN THỊ KHI CÓ NHÃN/NGUỒN XÁC NHẬN"
+  },
+  "items": [
+    {"product":"Amistar Top® 325SC","active":"Azoxystrobin 200 g/L + Difenoconazole 125 g/L","category":"Trừ bệnh","crops":["coffee","pepper"],"targets":["thán thư","rỉ sắt"],"effect":"Thuốc trừ bệnh; chỉ sử dụng đúng cây/đối tượng theo nhãn.","verification":"OFFICIAL_LISTED_REFERENCE"},
+    {"product":"Sivanto Prime 200SL","active":"Flupyradifurone","category":"Trừ sâu","crops":["coffee","pepper"],"targets":["rệp sáp"],"effect":"Thuốc trừ sâu; danh mục chính thức nêu rệp sáp trên cà phê, hồ tiêu.","verification":"OFFICIAL_LISTED_REFERENCE"},
+    {"product":"Nimitz 480EC","active":"Fluensulfone","category":"Tuyến trùng","crops":["coffee","pepper"],"targets":["tuyến trùng"],"effect":"Thuốc trừ tuyến trùng; danh mục chính thức nêu cà phê, hồ tiêu.","verification":"OFFICIAL_LISTED_REFERENCE"},
+    {"product":"BN-Fosthi 10GR","active":"Fosthiazate","category":"Tuyến trùng","crops":["coffee"],"targets":["tuyến trùng"],"effect":"Thuốc trừ tuyến trùng; danh mục chính thức nêu cà phê.","verification":"OFFICIAL_LISTED_REFERENCE"},
+    {"product":"Foster 15GR","active":"Fosthiazate","category":"Tuyến trùng","crops":["coffee"],"targets":["tuyến trùng"],"effect":"Thuốc trừ tuyến trùng; danh mục chính thức nêu cà phê.","verification":"OFFICIAL_LISTED_REFERENCE"},
+    {"product":"Makeno 10GR","active":"Fosthiazate","category":"Tuyến trùng","crops":["coffee","pepper"],"targets":["tuyến trùng"],"effect":"Thuốc trừ tuyến trùng; danh mục chính thức nêu hồ tiêu, cà phê.","verification":"OFFICIAL_LISTED_REFERENCE"},
+    {"product":"Nemathorin 10GR","active":"Fosthiazate","category":"Tuyến trùng","crops":["coffee","pepper"],"targets":["tuyến trùng"],"effect":"Thuốc trừ tuyến trùng; danh mục chính thức nêu cà phê, hồ tiêu.","verification":"OFFICIAL_LISTED_REFERENCE"},
+    {"product":"Nemazate 15GR","active":"Fosthiazate","category":"Tuyến trùng","crops":["coffee"],"targets":["tuyến trùng"],"effect":"Thuốc trừ tuyến trùng; danh mục chính thức nêu cà phê.","verification":"OFFICIAL_LISTED_REFERENCE"},
+    {"product":"Quota 10GR","active":"Fosthiazate","category":"Tuyến trùng","crops":["coffee","pepper"],"targets":["tuyến trùng"],"effect":"Thuốc trừ tuyến trùng; danh mục chính thức nêu cà phê, hồ tiêu.","verification":"OFFICIAL_LISTED_REFERENCE"},
+    {"product":"Sakuto 10GR","active":"Fosthiazate","category":"Tuyến trùng","crops":["coffee"],"targets":["tuyến trùng"],"effect":"Thuốc trừ tuyến trùng; danh mục chính thức nêu cà phê.","verification":"OFFICIAL_LISTED_REFERENCE"},
+    {"product":"Nema King 10GR","active":"Fosthiazate","category":"Tuyến trùng","crops":["coffee","pepper"],"targets":["tuyến trùng"],"effect":"Thuốc trừ tuyến trùng; danh mục chính thức nêu cà phê, hồ tiêu.","verification":"OFFICIAL_LISTED_REFERENCE"}
+  ]
+}
