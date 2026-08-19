@@ -17,9 +17,9 @@ jobs:
 
       - name: Apply v24 fixes
         env:
-          PATCH_B64: "PASTE_SCRIPT_B64"
+          PATCH_B64: "eyJ3b3JrZXIiOiJodHRwOi8vZXhhbXBsZSJ9"
         run: |
-          python3 -c "import base64; exec(base64.b64decode('\${PATCH_B64}'))"
+          python3 -c "import base64; exec(base64.b64decode('${PATCH_B64}'))"
 
       - name: Commit and push
         run: |
