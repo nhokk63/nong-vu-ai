@@ -1,12 +1,18 @@
-const VERSION='nongvu-ai-v22.1';
+const VERSION='nongvu-ai-v23.0';
 const CACHE=`${VERSION}-static`;
-const STATIC=['./','./index.html','./styles.css?v=37','./boot-guard.js?v=37','./app.js?v=37','./modal-fix.js?v=37','./needs-tab.js?v=37','./chemical-catalog.json?v=20260819','./manifest.json','./knowledge.json','./icon-192.png','./icon-512.png','./icon-180.png'];
+const STATIC=['./','./index.html','./styles.css?v=38','./boot-guard.js?v=38','./modal-fix.js?v=38','./app.js?v=38','./chemical-catalog.json?v=20260819','./manifest.json','./knowledge.json','./icon-192.png','./icon-512.png','./icon-180.png'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(c=>c.addAll(STATIC)).then(()=>self.skipWaiting()).catch(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',event=>{
  const req=event.request;
  if(req.method!=='GET') return;
  const url=new URL(req.url);
- if(url.pathname.includes('/api/')){event.respondWith(fetch(req).catch(()=>new Response(JSON.stringify({error:'offline'}),{status:503,headers:{'content-type':'application/json'}})));return;}
- event.respondWith(fetch(req).then(res=>{if(res.ok&&url.origin===location.origin){const copy=res.clone();caches.open(CACHE).then(c=>c.put(req,copy)).catch(()=>{})}return res}).catch(()=>caches.match(req).then(c=>c||caches.match('./index.html'))));
+ if(url.pathname.includes('/api/')){
+   event.respondWith(fetch(req).catch(()=>new Response(JSON.stringify({error:'offline'}),{status:503,headers:{'content-type':'application/json'}})));
+   return;
+ }
+ event.respondWith(fetch(req).then(res=>{
+   if(res.ok&&url.origin===location.origin){const copy=res.clone();caches.open(CACHE).then(c=>c.put(req,copy)).catch(()=>{})}
+   return res;
+ }).catch(()=>caches.match(req).then(c=>c||caches.match('./index.html'))));
 });
