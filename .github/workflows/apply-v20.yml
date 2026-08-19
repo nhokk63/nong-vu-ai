@@ -1,0 +1,26 @@
+name: Apply V20 files
+on:
+  push:
+    paths:
+      - '_v20trigger'
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble V20 files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s _v20parts/worker.01
+          test -s _v20parts/app.01
+          cat _v20parts/worker.* > _worker.js
+          cat _v20parts/app.* > app.js
+          rm -rf _v20parts _v20trigger
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add _worker.js app.js _v20parts _v20trigger
+          git commit -m 'Apply Nông Vụ AI v20 PRO code' || exit 0
+          git push
