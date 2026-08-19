@@ -1,6 +1,6 @@
-const VERSION='nongvu-ai-v17';
+const VERSION='nongvu-ai-v21';
 const CACHE=`${VERSION}-static`;
-const STATIC=['./','./index.html','./styles.css?v=17','./app.js?v=17','./manifest.json','./knowledge.json','./icon-192.png','./icon-512.png','./icon-180.png'];
+const STATIC=['./','./index.html','./styles.css?v=21','./app.js?v=21','./manifest.json','./knowledge.json','./icon-192.png','./icon-512.png','./icon-180.png'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(c=>c.addAll(STATIC)).then(()=>self.skipWaiting()).catch(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',event=>{
