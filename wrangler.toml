@@ -20,4 +20,4 @@ GROQ_MODEL = "openai/gpt-oss-120b"
 GROQ_VISION_MODEL = "qwen/qwen3.6-27b"
 
 [triggers]
-crons = ["*/5 * * * *", "0 22 * * *"]
+crons = ["* * * * *", "0 22 * * *"]

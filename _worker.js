@@ -17,6 +17,13 @@ function parseJson(x, fallback={}){try{return x?JSON.parse(x):fallback}catch{ret
 function cropName(c){return ({coffee:'Cà phê',pepper:'Hồ tiêu',areca:'Cau'}[c]||c||'Cây trồng');}
 function stageName(c,s){const m={coffee:{postharvest:'Sau thu hoạch',shoot:'Phục hồi – phát triển cành lá',floral:'Phân hóa mầm hoa',flower:'Ra hoa',fruitset:'Đậu quả',fruit:'Nuôi quả',ripening:'Quả phát triển – chín',preharvest:'Chuẩn bị thu hoạch'},pepper:{recovery:'Sau thu hoạch – phục hồi',canopy:'Phát triển thân – cành',flower:'Ra hoa',fruitset:'Đậu trái',fruit:'Nuôi trái',preharvest:'Trước thu hoạch',harvest:'Thu hoạch',post:'Sau thu hoạch'},areca:{seedling:'Cây con',juvenile:'Kiến thiết cơ bản',mature:'Cây trưởng thành',fruit:'Mang buồng – nuôi trái',harvest:'Thu hoạch'}};return m[c]?.[s]||s||'Chưa chọn';}
 
+const CHEMICAL_CATALOG = [
+  {product:'Amistar Top 325SC',active:'Azoxystrobin 200 g/L + Difenoconazole 125 g/L',crops:['coffee','pepper'],targets:['thán thư','rỉ sắt'],effects:'Thuốc trừ bệnh; hỗ trợ quản lý bệnh nấm theo nhãn.',source:'Danh mục thuốc BVTV hiện hành; phải đối chiếu nhãn trước mua/sử dụng.'},
+  {product:'Autopro 360SC',active:'Azocyclotin 100 g/L + Flonicamid 260 g/L',crops:['coffee'],targets:['rệp sáp'],effects:'Thuốc trừ sâu/rệp; dùng đúng đối tượng trên nhãn.',source:'Danh mục hiện hành; phải đối chiếu nhãn trước mua/sử dụng.'},
+  {product:'AU-Morax 60WG',active:'Cymoxanil 40% + Pyraclostrobin 20%',crops:['coffee'],targets:['rỉ sắt'],effects:'Thuốc trừ bệnh; hỗ trợ quản lý bệnh nấm theo nhãn.',source:'Danh mục hiện hành; phải đối chiếu nhãn trước mua/sử dụng.'}
+];
+const chemicalSourceNote = 'Tham chiếu danh mục thuốc BVTV hiện hành của Việt Nam. AI chỉ đưa ứng viên; luôn đối chiếu nhãn thực tế, cây, đối tượng, liều và PHI trước mua/sử dụng.';
+
 async function fetchWeather(lat, lon){
   const u=`https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(lat)}&longitude=${encodeURIComponent(lon)}&current=temperature_2m,relative_humidity_2m,precipitation,rain,wind_speed_10m,wind_gusts_10m,weather_code,is_day&hourly=precipitation_probability,precipitation,wind_speed_10m,relative_humidity_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max&forecast_days=5&timezone=auto`;
   const r=await fetch(u); if(!r.ok) throw new Error(`Weather ${r.status}`); return r.json();
@@ -142,11 +149,14 @@ async function callChatProvider(env, system, user, image){
 }
 
 function adviceSystem(){
-  return `Bạn là AI trợ lý nông vụ cho cà phê, hồ tiêu và cau tại Việt Nam. Mục tiêu là quản lý mùa vụ theo trạng thái thực tế, ưu tiên IPM và biện pháp không hóa học trước. Không được tự bịa tên thuốc, hoạt chất, liều hoặc PHI. Chỉ đưa sản phẩm/liều/PHI cụ thể khi inventory có label_verified=1 và thông tin đó phù hợp với cây/đối tượng. Nếu chưa đủ dữ liệu, nói rõ chưa đủ dữ liệu. Không biến lịch phun thành lịch cứng: mỗi xử lý phải có mốc đánh giá lại. Luôn đưa nextSteps để người dùng có thể duyệt thành lịch. Chỉ trả về JSON thuần, KHÔNG trả lời bằng markdown, KHÔNG in suy luận nội bộ, KHÔNG mô tả cách bạn tạo JSON và KHÔNG đưa ra chuỗi suy nghĩ. Chỉ dùng các trường: title, summary, assessment, risks[], checks[], nonChemical[], chemical[], weatherWindow, precautions[], confidence, nextSteps[]. chemical[] có product,active,dose,phi,why và chỉ có khi đủ dữ liệu xác minh. nextSteps[] có daysFromNow,kind,title,notes. Không chẩn đoán chắc chắn khi thiếu ảnh/triệu chứng.`;
+  return `Bạn là AI trợ lý nông vụ cho cà phê, hồ tiêu và cau tại Việt Nam. Ưu tiên IPM trước. Được phép đề xuất ứng viên thuốc từ CHEMICAL_CATALOG khi phù hợp; không bịa sản phẩm ngoài catalog. chemical[] phải có product,active,target,effect,dose,phi,why,source,verification. Khi chưa có nhãn xác minh dùng dose='Theo nhãn', phi='Theo nhãn', verification='UNVERIFIED'. Chỉ trả JSON thuần, không markdown, không suy luận nội bộ. Schema: {title,summary,assessment,risks[],checks[],nonChemical[],chemical[],weatherWindow,precautions[],confidence,nextSteps[]}. nextSteps[] gồm {daysFromNow,kind,title,notes}.`;
 }
 async function generateAdvice(env, body){
-  const p=body.plant||{}; const prompt={plant:{...p,crop_name:cropName(p.crop),stage_name:stageName(p.crop,p.stage)},observation:body.observation||'',weather:body.weather||{},inventory:(body.inventory||[]).filter(x=>Number(x.label_verified)===1),history:body.history||{},knowledge:body.knowledge||{}};
-  return callChatProvider(env,adviceSystem(),`Phân tích trường hợp sau và trả JSON theo schema mô tả. Đây là tư vấn có người duyệt cuối cùng. Dữ liệu: ${JSON.stringify(prompt)}`,body.image);
+  const p=body.plant||{};
+  const text=JSON.stringify([body.observation||'',p.stage||'']).toLowerCase();
+  const matched=CHEMICAL_CATALOG.filter(x=>x.crops.includes(p.crop)).filter(x=>x.targets.some(t=>text.includes(String(t).toLowerCase())));
+  const prompt={plant:{...p,crop_name:cropName(p.crop),stage_name:stageName(p.crop,p.stage)},observation:body.observation||'',weather:body.weather||{},chemicalCandidates:matched,catalogSource:chemicalSourceNote,history:body.history||{},knowledge:body.knowledge||{}};
+  return callChatProvider(env,adviceSystem(),`Phân tích trường hợp sau và nếu phù hợp hãy đưa ứng viên hóa học từ catalog vào chemical[]. Không tự bịa liều/PHI. Dữ liệu: ${JSON.stringify(prompt)}`,body.image);
 }
 
 async function saveRecommendation(env, rec){
@@ -170,15 +180,65 @@ function taskText(t, p){
   const when=t.scheduled_at?new Date(t.scheduled_at).toLocaleString('vi-VN',{timeZone:'Asia/Ho_Chi_Minh',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'';
   return `• ${p?.name||cropName(p?.crop)} — ${t.title||t.kind} — ${when}`;
 }
-function dailySystem(){return `Bạn là hệ thống điều phối Nông Vụ AI hằng ngày tại Việt Nam. Hãy đánh giá từng cây dựa trên giai đoạn, thời tiết hiện tại/dự báo, quan sát, lịch sử và vật tư đã đối chiếu. Ưu tiên IPM và biện pháp không hóa học. Không tự bịa tên thuốc/hoạt chất/liều/PHI; chỉ dùng chemical[] khi inventory label_verified=1 và phù hợp cây/đối tượng. Không tự tạo lịch cứng cho hóa chất; mọi bước phải có mốc kiểm tra lại. Chỉ trả JSON thuần, không markdown, không suy luận nội bộ. Schema: {dailySummary:string, alerts:[{plantId,level,title,message}], recommendations:[{plantId,title,summary,assessment,risks,checks,nonChemical,chemical,weatherWindow,precautions,confidence,nextSteps}]}. nextSteps[] gồm {daysFromNow,kind,title,notes}.`}
+function dailySystem(){
+  return `Bạn là hệ thống điều phối Nông Vụ AI hằng ngày. Ưu tiên IPM. Có thể đề xuất ứng viên thuốc từ CHEMICAL_CATALOG khi phù hợp; không bịa sản phẩm ngoài catalog. chemical[] gồm product,active,target,effect,dose,phi,why,source,verification. Nếu chưa xác minh nhãn dùng dose='Theo nhãn', phi='Theo nhãn', verification='UNVERIFIED'. Chỉ trả JSON thuần: {dailySummary:string,alerts:[{plantId,level,title,message}],recommendations:[{plantId,title,summary,assessment,risks,checks,nonChemical,chemical,weatherWindow,precautions,confidence,nextSteps}]}. nextSteps[] gồm {daysFromNow,kind,title,notes}.`;
+}
+
 async function saveKv(env,k,v){if(!env.DB)return;await env.DB.prepare('INSERT OR REPLACE INTO kv(k,v) VALUES(?,?)').bind(k,String(v)).run()}
 async function getKv(env,k){if(!env.DB)return null;const r=await env.DB.prepare('SELECT v FROM kv WHERE k=?').bind(k).first();return r?.v??null}
 async function telegramSend(env,chatId,message,replyMarkup=null){if(!env.TELEGRAM_BOT_TOKEN)return {ok:false};const payload={chat_id:chatId||env.TELEGRAM_CHAT_ID,text:message,disable_web_page_preview:true};if(replyMarkup)payload.reply_markup=replyMarkup;const r=await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const d=await r.json().catch(()=>({}));if(!r.ok||!d.ok)throw new Error(d.description||`Telegram ${r.status}`);return d}
 async function telegramAnswer(env,callbackId,text){if(!env.TELEGRAM_BOT_TOKEN)return;await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/answerCallbackQuery`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({callback_query_id:callbackId,text,show_alert:false})}).catch(()=>{})}
 async function telegramEdit(env,chatId,messageId,text){if(!env.TELEGRAM_BOT_TOKEN)return;await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/editMessageText`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({chat_id:chatId,message_id:messageId,text,disable_web_page_preview:true})}).catch(()=>{})}
 async function approveRecommendation(env,recId){if(!env.DB)throw new Error('D1 chưa được binding');const rec=await env.DB.prepare('SELECT * FROM recommendations WHERE id=?').bind(recId).first();if(!rec)throw new Error('Không tìm thấy khuyến cáo');if(rec.status!=='PENDING')return {ok:true,already:true};const meta=parseJson(rec.payload,{});const steps=Array.isArray(meta.nextSteps)&&meta.nextSteps.length?meta.nextSteps:[{daysFromNow:1,kind:'FOLLOW_UP',title:rec.title,notes:rec.body}];const nowMs=Date.now();const stm=[env.DB.prepare("UPDATE recommendations SET status='APPROVED', updated_at=? WHERE id=?").bind(iso(),recId)];const created=[];for(const step of steps.slice(0,8)){const days=Math.max(0,Number(step.daysFromNow)||0);const tid=crypto.randomUUID();const scheduled=new Date(nowMs+days*86400000).toISOString();created.push({id:tid,scheduled_at:scheduled,title:step.title||rec.title});stm.push(env.DB.prepare(`INSERT OR REPLACE INTO tasks(id,plant_id,rec_id,kind,title,scheduled_at,status,notes,meta,completed_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(tid,rec.plant_id,recId,step.kind||'FOLLOW_UP',step.title||rec.title,scheduled,'PLANNED',step.notes||rec.body,JSON.stringify(step),null,iso()))}await dbBatch(env,stm);return {ok:true,created}}
-async function rejectRecommendation(env,recId){if(!env.DB)throw new Error('D1 chưa được binding');await env.DB.prepare('DELETE FROM recommendations WHERE id=?').bind(recId).run();await env.DB.prepare("DELETE FROM tasks WHERE rec_id=? AND status!='DONE'").bind(recId).run();return {ok:true}}
-async function pollTelegram(env){if(!env.TELEGRAM_BOT_TOKEN||!env.TELEGRAM_CHAT_ID||!env.DB)return {processed:0};const offset=Number(await getKv(env,'telegram_update_offset')||0);const u=`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getUpdates?timeout=0&allowed_updates=${encodeURIComponent(JSON.stringify(['callback_query','message']))}${offset?`&offset=${offset}`:''}`;const r=await fetch(u);const d=await r.json().catch(()=>({}));if(!r.ok||!d.ok)return {processed:0};let processed=0,next=offset;for(const upd of d.result||[]){next=Math.max(next,Number(upd.update_id)+1);processed++;const cb=upd.callback_query;if(cb){const chatId=String(cb.message?.chat?.id||'');if(chatId!==String(env.TELEGRAM_CHAT_ID))continue;const data=String(cb.data||'');try{if(data.startsWith('approve:')){const id=data.slice(8);const out=await approveRecommendation(env,id);await telegramAnswer(env,cb.id,out.already?'Đã xử lý trước đó':'Đã duyệt và tạo lịch');await telegramEdit(env,chatId,cb.message.message_id,`✅ ĐÃ DUYỆT\n\n${cb.message.text||'Khuyến cáo'}\n\n${out.created?.length||0} mốc lịch đã được tạo. Hãy xem Lịch trong Nông Vụ AI và cập nhật cây sau mỗi lần thực hiện.`)}else if(data.startsWith('reject:')){const id=data.slice(7);await rejectRecommendation(env,id);await telegramAnswer(env,cb.id,'Đã từ chối và xóa khuyến cáo');await telegramEdit(env,chatId,cb.message.message_id,`❌ ĐÃ TỪ CHỐI\n\n${cb.message.text||'Khuyến cáo'}\n\nKhuyến cáo và các task chưa hoàn thành liên quan đã được xóa.`)}}catch(e){await telegramAnswer(env,cb.id,e.message||'Không xử lý được')}continue}}if(next>offset)await saveKv(env,'telegram_update_offset',next);return {processed}}
+async function rejectRecommendation(env,recId){
+  if(!env.DB)throw new Error('D1 chưa được binding');
+  await env.DB.prepare("DELETE FROM tasks WHERE rec_id=? AND status!='DONE'").bind(recId).run();
+  await env.DB.prepare('DELETE FROM recommendations WHERE id=?').bind(recId).run();
+  return {ok:true};
+}
+
+async function pollTelegram(env){
+  if(!env.TELEGRAM_BOT_TOKEN||!env.TELEGRAM_CHAT_ID||!env.DB)return {processed:0};
+  const offset=Number(await getKv(env,'telegram_update_offset')||0);
+  const u=`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/getUpdates?timeout=0&allowed_updates=${encodeURIComponent(JSON.stringify(['callback_query','message']))}${offset?`&offset=${offset}`:''}`;
+  const r=await fetch(u); const d=await r.json().catch(()=>({}));
+  if(!r.ok||!d.ok)return {processed:0};
+  let processed=0,next=offset;
+  for(const upd of d.result||[]){
+    const updateId=Number(upd.update_id); const cb=upd.callback_query;
+    try{
+      if(cb){
+        const chatId=String(cb.message?.chat?.id||'');
+        if(chatId!==String(env.TELEGRAM_CHAT_ID)){ next=Math.max(next,updateId+1); continue; }
+        const data=String(cb.data||'');
+        if(data.startsWith('approve:')){
+          const out=await approveRecommendation(env,data.slice(8));
+          await telegramAnswer(env,cb.id,out.already?'Đã xử lý trước đó':'Đã duyệt và tạo lịch');
+          await telegramEdit(env,chatId,cb.message.message_id,`✅ ĐÃ DUYỆT
+
+${cb.message.text||'Khuyến cáo'}
+
+${out.created?.length||0} mốc lịch đã được tạo.`);
+        }else if(data.startsWith('reject:')){
+          await rejectRecommendation(env,data.slice(7));
+          await telegramAnswer(env,cb.id,'Đã từ chối và xóa khuyến cáo');
+          await telegramEdit(env,chatId,cb.message.message_id,`❌ ĐÃ TỪ CHỐI
+
+${cb.message.text||'Khuyến cáo'}
+
+Khuyến cáo và task chưa hoàn thành liên quan đã được xóa.`);
+        }else{ await telegramAnswer(env,cb.id,'Không nhận diện được thao tác'); }
+        next=Math.max(next,updateId+1); processed++; continue;
+      }
+      next=Math.max(next,updateId+1); processed++;
+    }catch(e){
+      try{await telegramAnswer(env,cb?.id,e.message||'Không xử lý được');}catch{}
+      break;
+    }
+  }
+  if(next>offset)await saveKv(env,'telegram_update_offset',next);
+  return {processed};
+}
 
 async function runHourly(env){
   if(!env.DB) return {created:0,notifications:0,reason:'no-db'};
@@ -213,7 +273,7 @@ async function runHourly(env){
   return {created:0,notifications};
 }
 
-async function runDaily(env,forceDaily=false){if(!env.DB)return {created:0,notifications:0,reason:'no-db'};const day=new Date().toISOString().slice(0,10);const guard=await getKv(env,'daily_ai_run_date');if(!forceDaily&&guard===day)return {created:0,notifications:0,skipped:true};const data=await readAll(env);let created=0,notifications=0;const plants=[];for(const p of data.plants){if(!p.lat||!p.lon)continue;try{const w=await fetchWeather(p.lat,p.lon);plants.push({plant:p,weather:w,history:{recs:data.recs.filter(r=>r.plant_id===p.id).slice(-8),tasks:data.tasks.filter(t=>t.plant_id===p.id).slice(-8),observations:data.observations.filter(o=>o.plant_id===p.id).slice(-5)}})}catch{plants.push({plant:p,weather:null,history:{recs:[],tasks:[],observations:[]}})}}if(!plants.length||!(env.GROQ_API_KEY||env.OPENROUTER_API_KEY))return {created:0,notifications:0,reason:'no-plants-or-ai'};const prompt={date:new Date().toISOString(),plants,inventory:data.inventory.filter(x=>Number(x.label_verified)===1)};try{const out=await callChatProvider(env,dailySystem(),`Tạo đánh giá hằng ngày cho dữ liệu sau. Chỉ trả JSON: ${JSON.stringify(prompt)}`);for(const a of out.alerts||[]){const fp=`ai-alert:${a.plantId}:${day}:${a.title}`;const p=data.plants.find(x=>x.id===a.plantId);const msg=`${a.level==='red'?'🚨':a.level==='orange'?'⚠️':'🌱'} ${a.title}\n${p?.name||cropName(p?.crop)}\n\n${a.message}`;if(await notifyOnce(env,fp,msg))notifications++}for(const a of out.recommendations||[]){if(!a.plantId)continue;const rec={id:crypto.randomUUID(),plant_id:a.plantId,title:a.title||'Khuyến cáo AI hằng ngày',body:a.summary||'',payload:JSON.stringify(a),status:'PENDING',source:'AI DAILY',created_at:iso(),updated_at:iso()};await saveRecommendation(env,rec);created++;if(env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID){const p=data.plants.find(x=>x.id===a.plantId);const lines=[`🤖 KHUYẾN CÁO MỚI — ${p?.name||cropName(p?.crop)}`,'',rec.title,'',a.summary||'','',`⚠️ Đây là đề xuất chờ mày xác nhận. Chưa tạo lịch và chưa coi là lệnh xử lý.`].join('\n');const kb={inline_keyboard:[[{text:'✅ DUYỆT → LÊN LỊCH',callback_data:`approve:${rec.id}`},{text:'❌ TỪ CHỐI → XÓA',callback_data:`reject:${rec.id}`}]]};await telegramSend(env,env.TELEGRAM_CHAT_ID,lines,kb)}}if(out.dailySummary&&env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID){const fp=`digest:${day}`;if(await notifyOnce(env,fp,`🌱 NÔNG VỤ AI — TỔNG HỢP HÔM NAY\n\n${out.dailySummary}`))notifications++}await saveKv(env,'daily_ai_run_date',day)}catch(err){const fp=`ai-error:${day}`;if(await notifyOnce(env,fp,`⚠️ Nông Vụ AI\nAI tự động hôm nay chưa chạy được: ${err.message}`))notifications++}return {created,notifications}}
+async function runDaily(env,forceDaily=false){if(!env.DB)return {created:0,notifications:0,reason:'no-db'};const day=new Date().toISOString().slice(0,10);const guard=await getKv(env,'daily_ai_run_date');if(!forceDaily&&guard===day)return {created:0,notifications:0,skipped:true};const data=await readAll(env);let created=0,notifications=0;const plants=[];for(const p of data.plants){if(!p.lat||!p.lon)continue;try{const w=await fetchWeather(p.lat,p.lon);plants.push({plant:p,weather:w,history:{recs:data.recs.filter(r=>r.plant_id===p.id).slice(-8),tasks:data.tasks.filter(t=>t.plant_id===p.id).slice(-8),observations:data.observations.filter(o=>o.plant_id===p.id).slice(-5)}})}catch{plants.push({plant:p,weather:null,history:{recs:[],tasks:[],observations:[]}})}}if(!plants.length||!(env.GROQ_API_KEY||env.OPENROUTER_API_KEY))return {created:0,notifications:0,reason:'no-plants-or-ai'};const prompt={date:new Date().toISOString(),plants,inventory:data.inventory.filter(x=>Number(x.label_verified)===1),chemicalCatalog:CHEMICAL_CATALOG,catalogSource:chemicalSourceNote};try{const out=await callChatProvider(env,dailySystem(),`Tạo đánh giá hằng ngày cho dữ liệu sau. Chỉ trả JSON: ${JSON.stringify(prompt)}`);for(const a of out.alerts||[]){const fp=`ai-alert:${a.plantId}:${day}:${a.title}`;const p=data.plants.find(x=>x.id===a.plantId);const msg=`${a.level==='red'?'🚨':a.level==='orange'?'⚠️':'🌱'} ${a.title}\n${p?.name||cropName(p?.crop)}\n\n${a.message}`;if(await notifyOnce(env,fp,msg))notifications++}for(const a of out.recommendations||[]){if(!a.plantId)continue;const rec={id:crypto.randomUUID(),plant_id:a.plantId,title:a.title||'Khuyến cáo AI hằng ngày',body:a.summary||'',payload:JSON.stringify(a),status:'PENDING',source:'AI DAILY',created_at:iso(),updated_at:iso()};await saveRecommendation(env,rec);created++;if(env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID){const p=data.plants.find(x=>x.id===a.plantId);const lines=[`🤖 KHUYẾN CÁO MỚI — ${p?.name||cropName(p?.crop)}`,'',rec.title,'',a.summary||'','',`⚠️ Đây là đề xuất chờ mày xác nhận. Chưa tạo lịch và chưa coi là lệnh xử lý.`].join('\n');const kb={inline_keyboard:[[{text:'✅ DUYỆT → LÊN LỊCH',callback_data:`approve:${rec.id}`},{text:'❌ TỪ CHỐI → XÓA',callback_data:`reject:${rec.id}`}]]};await telegramSend(env,env.TELEGRAM_CHAT_ID,lines,kb)}}if(out.dailySummary&&env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID){const fp=`digest:${day}`;if(await notifyOnce(env,fp,`🌱 NÔNG VỤ AI — TỔNG HỢP HÔM NAY\n\n${out.dailySummary}`))notifications++}await saveKv(env,'daily_ai_run_date',day)}catch(err){const fp=`ai-error:${day}`;if(await notifyOnce(env,fp,`⚠️ Nông Vụ AI\nAI tự động hôm nay chưa chạy được: ${err.message}`))notifications++}return {created,notifications}}
 
 async function route(request, env){
   const url=new URL(request.url);
@@ -233,7 +293,9 @@ async function route(request, env){
   if(url.pathname==='/api/data' && request.method==='GET') return json(await readAll(env));
   if(url.pathname==='/api/weather' && request.method==='GET'){const lat=Number(url.searchParams.get('lat')),lon=Number(url.searchParams.get('lon')); if(!Number.isFinite(lat)||!Number.isFinite(lon)) return json({error:'Thiếu lat/lon'},400); const w=await fetchWeather(lat,lon); return json(w);}
   if(url.pathname==='/api/advice' && request.method==='POST'){const b=await request.json(); try{return json(await generateAdvice(env,b));}catch(e){return json({error:e.message},503)}}
-  if(url.pathname.startsWith('/api/recommendations/') && request.method==='DELETE'){const rid=decodeURIComponent(url.pathname.split('/').pop()); if(!env.DB) return json({ok:false,local:true}); await env.DB.prepare(`DELETE FROM recommendations WHERE id=?`).bind(rid).run(); return json({ok:true});}
+  if(url.pathname==='/api/recommendations/approve' && request.method==='POST'){const b=await request.json().catch(()=>({}));if(!b.id)return json({error:'Thiếu recommendation id'},400);return json(await approveRecommendation(env,b.id));}
+  if(url.pathname==='/api/recommendations/reject' && request.method==='POST'){const b=await request.json().catch(()=>({}));if(!b.id)return json({error:'Thiếu recommendation id'},400);return json(await rejectRecommendation(env,b.id));}
+  if(url.pathname.startsWith('/api/recommendations/') && request.method==='DELETE'){const rid=decodeURIComponent(url.pathname.split('/').pop()); if(!rid) return json({error:'Thiếu recommendation id'},400); return json(await rejectRecommendation(env,rid));}
   if(url.pathname.startsWith('/api/task-status/') && request.method==='POST'){const tid=decodeURIComponent(url.pathname.split('/').pop()); const b=await request.json().catch(()=>({})); if(!env.DB) return json({ok:false,local:true}); if(b.offsetDays){const row=await env.DB.prepare(`SELECT scheduled_at FROM tasks WHERE id=?`).bind(tid).first(); if(!row?.scheduled_at)return json({error:'Task chưa có thời gian'},400); const next=new Date(new Date(row.scheduled_at).getTime()+Number(b.offsetDays)*86400000).toISOString(); await env.DB.prepare(`UPDATE tasks SET scheduled_at=?,status=? WHERE id=?`).bind(next,b.status||'PLANNED',tid).run();}else{await env.DB.prepare(`UPDATE tasks SET status=?,completed_at=? WHERE id=?`).bind(b.status||'PLANNED',b.status==='DONE'?iso():null,tid).run();} return json({ok:true});}
   if(url.pathname==='/api/recommendations' && request.method==='POST'){const rec=await request.json(); await saveRecommendation(env,rec); return json({ok:true});}
   if(url.pathname.startsWith('/api/plants/') && request.method==='DELETE'){
