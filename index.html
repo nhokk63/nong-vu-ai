@@ -9,15 +9,47 @@
 <meta name="apple-mobile-web-app-title" content="Nông Vụ AI">
 <link rel="apple-touch-icon" href="./icon-180.png">
 <link rel="manifest" href="./manifest.json">
-<link rel="stylesheet" href="./styles.css?v=40">
+<link rel="stylesheet" href="./styles.css?v=41">
 <title>Nông Vụ AI</title>
 </head>
 <body>
 <div id="app"><div class="boot"><div class="boot-mark">🌱</div><div class="boot-title">Nông Vụ AI</div><div class="boot-sub">Đang khởi động…</div></div></div>
-<script src="./boot-guard.js?v=40" defer></script>
-<script src="./modal-fix.js?v=40" defer></script>
-<script src="./app.js?v=40" defer></script>
-<script src="./needs-tab.js?v=40" defer></script>
-<script src="./needs-bridge.js?v=40" defer></script>
+<script>
+(()=>{
+  'use strict';
+  const app=()=>document.getElementById('app');
+  const isBoot=()=>!!document.querySelector('#app .boot');
+  function esc(s){return String(s??'').replace(/[&<>\"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[m]))}
+  function showError(msg){
+    const a=app(); if(!a||!isBoot()) return;
+    a.innerHTML=`<div style="min-height:100vh;display:grid;place-items:center;padding:24px;background:#f5f7fb;font-family:system-ui,-apple-system,sans-serif"><div style="width:min(520px,100%);background:#fff;border:1px solid #e3e5ea;border-radius:22px;padding:24px;box-shadow:0 12px 40px rgba(0,0,0,.08)"><div style="font-size:28px;font-weight:900">Nông Vụ AI</div><div style="margin-top:8px;color:#b42318;font-weight:800">Không thể khởi động ứng dụng</div><div style="margin-top:8px;color:#666;font-size:13px;line-height:1.5;word-break:break-word">${esc(msg||'Lỗi JavaScript')}</div><button id="boot-reload" style="margin-top:16px;border:0;border-radius:14px;padding:12px 16px;background:#147b50;color:#fff;font-weight:800">Tải lại sạch</button></div></div>`;
+    document.getElementById('boot-reload')?.addEventListener('click',()=>location.href=location.pathname+'?clean='+Date.now()+location.hash);
+  }
+  window.addEventListener('error',e=>{if(isBoot())showError(e.error?.message||e.message||'JavaScript error')});
+  window.addEventListener('unhandledrejection',e=>{if(isBoot())showError(e.reason?.message||String(e.reason||'Promise rejection'))});
+  try{
+    if('serviceWorker' in navigator){
+      navigator.serviceWorker.getRegistrations().then(rs=>Promise.all(rs.map(r=>r.unregister()))).catch(()=>{});
+    }
+    if(window.caches?.keys){ caches.keys().then(keys=>Promise.all(keys.map(k=>caches.delete(k)))).catch(()=>{}); }
+  }catch{}
+  const rawFetch=window.fetch.bind(window);
+  window.fetch=(input,init={})=>{
+    if(!isBoot()) return rawFetch(input,init);
+    const controller=new AbortController();
+    const ext=init?.signal;
+    let timer;
+    const abort=()=>controller.abort(ext?.reason);
+    if(ext?.aborted) controller.abort(ext.reason); else ext?.addEventListener?.('abort',abort,{once:true});
+    timer=setTimeout(()=>controller.abort(new DOMException('Startup request timeout','TimeoutError')),5000);
+    return rawFetch(input,{...init,signal:controller.signal}).finally(()=>{clearTimeout(timer);ext?.removeEventListener?.('abort',abort)});
+  };
+  setTimeout(()=>{if(isBoot())showError('Ứng dụng không hoàn tất khởi động sau 18 giây.')},18000);
+})();
+</script>
+<script src="./app.js?v=41"></script>
+<script src="./modal-fix.js?v=41" defer></script>
+<script src="./needs-tab.js?v=41" defer></script>
+<script src="./needs-bridge.js?v=41" defer></script>
 </body>
 </html>
