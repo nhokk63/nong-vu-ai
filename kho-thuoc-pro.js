@@ -1,0 +1,66 @@
+(function(){
+  const API='https://nong-vu-ai.draculacom1.workers.dev';
+  const esc=s=>String(s??'').replace(/[&<>\"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[m]));
+  let cat=null, dataCache=null, tab='all', q='';
+  const parse=v=>{try{return JSON.parse(v||'{}')}catch{return {}}};
+  const crop={coffee:'Cà phê',pepper:'Hồ tiêu',areca:'Cau'};
+  const type=x=>x?.category||x?.type||'Khác';
+  const formatDate=s=>s?new Date(s).toLocaleString('vi-VN',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'';
+  const daysLeft=s=>{if(!s)return ''; const d=Math.ceil((new Date(s)-Date.now())/86400000); if(d>1)return `Còn ${d} ngày`; if(d===1)return 'Còn 1 ngày'; if(d===0)return 'Hôm nay'; return `Quá ${Math.abs(d)} ngày`;};
+  async function json(url,opts){const r=await fetch(url,opts);const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||`HTTP ${r.status}`);return d;}
+  async function load(){
+    const [c,d]=await Promise.all([json('./chemical-catalog.json'),json(API+'/api/data')]);cat=c;dataCache=d;return d;
+  }
+  function getCatalogFor(inv){
+    const a=(cat?.items||[]); const name=String(inv?.name||'').toLowerCase(); return a.find(x=>String(x.product).toLowerCase()===name)||a.find(x=>name.includes(String(x.product).toLowerCase())||String(x.product).toLowerCase().includes(name));
+  }
+  function chemFromRecs(recs){
+    const out=[];for(const r of recs||[]){const p=parse(r.payload);for(const c of p.chemical||[]){out.push({...c,recId:r.id,recTitle:r.title,plantId:r.plant_id,recStatus:r.status,regimen:p.regimen||null});}}
+    const seen=new Map();for(const c of out){const key=`${String(c.product||c.name||'').toLowerCase()}|${String(c.active||'').toLowerCase()}`;if(key.replace(/\|/g,''))seen.set(key,c);}return [...seen.values()];
+  }
+  function regimenFromRec(r){
+    const p=parse(r.payload); if(Array.isArray(p.regimen?.rounds)&&p.regimen.rounds.length)return p.regimen;
+    const steps=Array.isArray(p.nextSteps)?p.nextSteps:[];
+    const cs=Array.isArray(p.chemical)?p.chemical:[];
+    return {title:'Phác đồ theo dõi AI',rounds:steps.map((s,i)=>({offsetDays:Number(s.daysFromNow)||0,title:s.title||`Cữ ${i+1}`,purpose:s.notes||'',products:i===0?cs.slice(0,1):cs.slice(i,i+1),reviewAfterDays:null,updateRequired:true,notes:'Chưa có dữ liệu nhãn xác minh về khoảng tác dụng; đánh giá lại cây trước cữ tiếp theo.'}))};
+  }
+  function style(){
+    if(document.getElementById('nv-kho-pro-style'))return;
+    const st=document.createElement('style');st.id='nv-kho-pro-style';st.textContent=`
+      #nv-kho-pro-btn{position:fixed;right:16px;bottom:150px;z-index:9989;border:0;border-radius:18px;padding:12px 14px;font-weight:900;color:#fff;background:linear-gradient(135deg,#0b78f2,#1a5ed1);box-shadow:0 12px 28px rgba(20,90,180,.24)}
+      #nv-kho-pro{position:fixed;inset:0;z-index:10001;background:rgba(246,247,250,.98);backdrop-filter:blur(18px);display:none;overflow:auto}
+      #nv-kho-pro.on{display:block;animation:nvkIn .22s ease both}@keyframes nvkIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+      .nvkp-head{position:sticky;top:0;z-index:4;padding:16px 16px 12px;background:rgba(246,247,250,.94);border-bottom:1px solid #e6e7eb;backdrop-filter:blur(18px)}
+      .nvkp-title{font-size:30px;font-weight:950;letter-spacing:-.8px}.nvkp-sub{color:#6d7078;margin-top:3px}.nvkp-close{float:right;border:0;border-radius:14px;width:42px;height:42px;background:#fff;font-size:24px}
+      .nvkp-body{padding:14px 14px 110px;max-width:880px;margin:auto}.nvkp-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.nvkp-stat{background:#fff;border:1px solid #e8e9ee;border-radius:18px;padding:14px}.nvkp-stat b{font-size:25px;display:block}.nvkp-stat span{font-size:11px;color:#767881}
+      .nvkp-card{background:#fff;border:1px solid #e8e9ee;border-radius:20px;padding:16px;margin-top:12px;box-shadow:0 6px 24px rgba(0,0,0,.035)}.nvkp-card h3{margin:0;font-size:18px}.nvkp-muted{color:#73757e;font-size:12px;line-height:1.5}.nvkp-search{width:100%;box-sizing:border-box;border:1px solid #dedfe5;border-radius:14px;padding:12px;margin:10px 0;font-size:15px}.nvkp-tabs{display:flex;gap:8px;overflow:auto;padding:8px 0}.nvkp-tabs button{border:0;border-radius:999px;background:#fff;padding:9px 12px;white-space:nowrap;font-weight:800}.nvkp-tabs button.on{background:#0c76e8;color:#fff}.nvkp-row{display:flex;gap:12px;justify-content:space-between;align-items:flex-start;padding:13px 0;border-top:1px solid #ececf0}.nvkp-row:first-child{border-top:0}.nvkp-name{font-weight:900}.nvkp-pill{display:inline-block;border-radius:999px;padding:4px 8px;font-size:10px;font-weight:900;background:#edf5ff;color:#175ca8;margin:6px 5px 0 0}.nvkp-pill.green{background:#e5f8ed;color:#187347}.nvkp-pill.warn{background:#fff3dd;color:#8b5f00}.nvkp-check{width:22px;height:22px;accent-color:#0b79ea}.nvkp-round{border:1px solid #e6e8ee;border-radius:16px;padding:13px;margin-top:10px;background:linear-gradient(180deg,#fff,#fbfcff)}.nvkp-round-head{display:flex;justify-content:space-between;gap:10px}.nvkp-day{font-weight:950;color:#0c6fd7}.nvkp-product{margin-top:8px;padding:9px 10px;border-radius:12px;background:#f6f8fb}.nvkp-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.nvkp-btn{border:0;border-radius:13px;padding:10px 13px;font-weight:900}.nvkp-btn.primary{background:#0b79ea;color:#fff}.nvkp-btn.light{background:#eef0f4}.nvkp-btn.green{background:#def6e8;color:#17653f}.nvkp-warning{padding:11px;border-radius:14px;background:#fff5dd;color:#7d5b17;font-size:12px;line-height:1.5}.nvkp-empty{text-align:center;color:#777;padding:24px 8px}
+      @media(min-width:700px){.nvkp-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+    `;document.head.appendChild(st);
+  }
+  function ensure(){
+    style();if(document.getElementById('nv-kho-pro'))return;
+    const b=document.createElement('button');b.id='nv-kho-pro-btn';b.textContent='🧪 Kho thuốc AI';b.onclick=open;document.body.appendChild(b);
+    const o=document.createElement('div');o.id='nv-kho-pro';o.innerHTML=`<div class="nvkp-head"><button class="nvkp-close" id="nvkp-close">×</button><div class="nvkp-title">Kho thuốc AI</div><div class="nvkp-sub">Danh mục • phác đồ • từng cữ • tồn kho • theo dõi sau xử lý</div></div><div class="nvkp-body" id="nvkp-body"></div>`;document.body.appendChild(o);document.getElementById('nvkp-close').onclick=()=>o.classList.remove('on');
+  }
+  async function saveStock(id,stock){
+    const d=dataCache||await load();const inv=d.inventory||[];const x=inv.find(i=>i.id===id);if(!x)return;x.stock=stock?1:0;await json(API+'/api/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({plants:d.plants||[],recs:d.recs||[],tasks:d.tasks||[],inventory:inv})});dataCache=d;render();
+  }
+  async function completeTask(id){await json(API+'/api/task-status/'+encodeURIComponent(id),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({status:'DONE'})});dataCache=await json(API+'/api/data');render();}
+  function render(){
+    ensure();const host=document.getElementById('nvkp-body');const d=dataCache; if(!d){host.innerHTML='<div class="nvkp-card">Đang tải…</div>';return;}
+    const recs=d.recs||[], inv=d.inventory||[], tasks=d.tasks||[];const chemicals=chemFromRecs(recs);const owned=inv.filter(x=>Number(x.stock)>0).length;const planned=tasks.filter(x=>x.status==='PLANNED').length;const pending=recs.filter(x=>x.status==='PENDING').length;
+    const cats=['all',...new Set([...(cat?.items||[]).map(type),...chemicals.map(type)])];
+    const canon=new Map((cat?.items||[]).map(x=>[String(x.product).toLowerCase(),x]));
+    const list=(cat?.items||[]).filter(x=>tab==='all'||type(x)===tab).filter(x=>!q||`${x.product} ${x.active} ${x.targets.join(' ')}`.toLowerCase().includes(q.toLowerCase()));
+    const invMap=new Map(inv.map(x=>[String(x.name).toLowerCase(),x]));
+    host.innerHTML=`
+      <div class="nvkp-grid"><div class="nvkp-stat"><b>${recs.length}</b><span>Khuyến cáo AI</span></div><div class="nvkp-stat"><b>${chemicals.length}</b><span>Ứng viên thuốc</span></div><div class="nvkp-stat"><b>${owned}</b><span>Loại đang có</span></div><div class="nvkp-stat"><b>${planned}</b><span>Cữ đang theo dõi</span></div></div>
+      <div class="nvkp-card"><h3>🔎 Danh mục thuốc tham chiếu</h3><div class="nvkp-muted">Nguồn chính thức được cập nhật theo Thông tư 75/2025/TT-BNNMT và Thông tư 28/2026/TT-BNNMT. Đây là danh mục tham chiếu; liều, PHI và phối trộn phải đối chiếu nhãn thực tế.</div><input id="nvkp-search" class="nvkp-search" placeholder="Tìm tên thuốc, hoạt chất, đối tượng…" value="${esc(q)}"><div class="nvkp-tabs">${cats.map(c=>`<button class="${tab===c?'on':''}" data-cat="${esc(c)}">${c==='all'?'Tất cả':esc(c)}</button>`).join('')}</div>${list.map(x=>{const local=invMap.get(String(x.product).toLowerCase());return `<div class="nvkp-row"><div><div class="nvkp-name">${esc(x.product)}</div><div class="nvkp-muted">${esc(x.active)} · ${esc(x.effect)}</div><span class="nvkp-pill">${esc(x.category)}</span><span class="nvkp-pill">${esc(x.targets.join(', '))}</span><span class="nvkp-pill green">Được liệt kê tham chiếu</span></div><label><input class="nvkp-check" type="checkbox" ${local&&Number(local.stock)>0?'checked':''} data-stock-id="${local?.id||''}" data-catalog-name="${esc(x.product)}"> <span class="nvkp-muted">Đã có</span></label></div>`}).join('')||'<div class="nvkp-empty">Không có mục phù hợp.</div>'}</div>
+      <div class="nvkp-card"><h3>🧭 Phác đồ đang theo dõi</h3><div class="nvkp-muted">Mỗi cữ là một bước riêng. Sau cữ cần cập nhật tình trạng để AI quyết định cữ kế tiếp. Hệ thống không tự suy diễn thời gian tác dụng hoặc công thức phối trộn khi chưa có nguồn xác minh.</div>${recs.filter(r=>Array.isArray(parse(r.payload).regimen?.rounds)&&parse(r.payload).regimen.rounds.length || Array.isArray(parse(r.payload).nextSteps)&&parse(r.payload).nextSteps.length).map(r=>{const p=d.plants.find(x=>x.id===r.plant_id);const reg=regimenFromRec(r);const ts=tasks.filter(t=>t.rec_id===r.id).sort((a,b)=>(a.scheduled_at||'').localeCompare(b.scheduled_at||''));return `<div class="nvkp-card" style="margin-top:10px"><h3>${esc(reg.title||r.title||'Phác đồ AI')}</h3><div class="nvkp-muted">${esc(p?.name||crop[p?.crop]||'Cây trồng')} · ${esc(r.status||'')}</div>${reg.rounds.map((rd,i)=>{const t=ts[i];const products=rd.products||[];return `<div class="nvkp-round"><div class="nvkp-round-head"><div><div class="nvkp-day">${rd.offsetDays===0?'Hôm nay':`Sau ${Number(rd.offsetDays)||0} ngày`}</div><b>${esc(rd.title||`Cữ ${i+1}`)}</b></div><div class="nvkp-muted">${t?daysLeft(t.scheduled_at):''}</div></div><div class="nvkp-muted" style="margin-top:6px">${esc(rd.purpose||'')}</div>${products.map(pr=>`<div class="nvkp-product"><b>💊 ${esc(pr.product||pr.name||'Ứng viên')}</b><div class="nvkp-muted">${esc(pr.active||'')} · ${esc(pr.target||pr.targets||'')}</div><div class="nvkp-muted">Liều: ${esc(pr.dose||'Theo nhãn')} · PHI: ${esc(pr.phi||'Theo nhãn')}</div></div>`).join('')||'<div class="nvkp-muted">Chưa gán sản phẩm cụ thể cho cữ này.</div>'}<div class="nvkp-warning">⚠️ Không tự phối trộn. Chỉ phối khi nhãn/nguồn chính thức cho phép.</div><div class="nvkp-actions">${t&&t.status!=='DONE'?`<button class="nvkp-btn green" data-done-task="${esc(t.id)}">✓ Đã làm + cập nhật</button>`:''}<button class="nvkp-btn light" data-copy-round="${esc(t?.id||'')}">Xem yêu cầu cữ</button></div></div>`}).join('')}</div>`}).join('')||'<div class="nvkp-empty">Chưa có phác đồ. Hãy chạy AI tư vấn và duyệt khuyến cáo.</div>'}</div>
+      <div class="nvkp-card"><h3>🧺 Các thuốc cần bổ sung</h3>${list.filter(x=>!invMap.get(String(x.product).toLowerCase())||!Number(invMap.get(String(x.product).toLowerCase()).stock)).map(x=>`<div class="nvkp-row"><div><div class="nvkp-name">${esc(x.product)}</div><div class="nvkp-muted">${esc(x.active)} · ${esc(x.category)} · ${esc(x.targets.join(', '))}</div></div><span class="nvkp-pill warn">CẦN BỔ SUNG</span></div>`).join('')||'<div class="nvkp-empty">Kho đã đủ các mục đang được theo dõi.</div>'}</div>`;
+    host.querySelector('#nvkp-search').oninput=e=>{q=e.target.value;render()};host.querySelectorAll('[data-cat]').forEach(x=>x.onclick=()=>{tab=x.dataset.cat;render()});host.querySelectorAll('[data-stock-id]').forEach(x=>x.onchange=async e=>{if(!x.dataset.stockId){alert('Thuốc chưa được AI đưa vào D1; hãy chạy tư vấn để tạo mục kho.');e.target.checked=false;return}try{await saveStock(x.dataset.stockId,e.target.checked)}catch(err){alert(err.message);e.target.checked=!e.target.checked}});host.querySelectorAll('[data-done-task]').forEach(x=>x.onclick=()=>completeTask(x.dataset.doneTask));
+  }
+  async function open(){ensure();document.getElementById('nv-kho-pro').classList.add('on');try{await load();render()}catch(e){document.getElementById('nvkp-body').innerHTML=`<div class="nvkp-card" style="color:#b3261e">${esc(e.message)}</div>`}}
+  window.NVKhoPro={open,load,render};
+  document.addEventListener('click',()=>setTimeout(ensure,400));setTimeout(ensure,1200);
+})();
