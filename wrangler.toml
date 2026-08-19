@@ -19,5 +19,4 @@ OPENROUTER_VISION_MODEL = "openrouter/free"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
 [triggers]
-crons = ["0 * * * *", "0 22 * * *"]
-
+crons = ["*/5 * * * *", "0 22 * * *"]
