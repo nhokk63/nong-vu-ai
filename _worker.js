@@ -40,6 +40,7 @@ function openaiContentText(body){
   return txt;
 }
 function extractJson(s){
+  if(typeof s!=='string') return null;
   try{return JSON.parse(s)}catch{}
   const m=s.match(/\{[\s\S]*\}/); if(m){try{return JSON.parse(m[0])}catch{}}
   return null;
@@ -53,46 +54,61 @@ async function callChatProvider(env, system, user, image){
     : user;
   messages.push({role:'user',content:userContent});
 
-  // Fast path: Groq for text, because it is the primary low-latency provider.
-  if(env.GROQ_API_KEY && !isImage){
-    try{
-      const model=env.GROQ_MODEL||'llama-3.3-70b-versatile';
-      const payload={
-        model,
-        messages,
-        temperature:0.15,
-        max_tokens:650,
-        response_format:{type:'json_object'}
-      };
-      const ctrl=new AbortController();
-      const timer=setTimeout(()=>ctrl.abort(),60000);
-      let r;
+  const errors=[];
+
+  // Groq is primary. Model IDs are explicit so a stale Cloudflare variable cannot force a retired model.
+  if(env.GROQ_API_KEY){
+    const models=isImage
+      ? ['qwen/qwen3.6-27b']
+      : ['openai/gpt-oss-120b','openai/gpt-oss-20b'];
+
+    for(const model of models){
       try{
-        r=await fetch('https://api.groq.com/openai/v1/chat/completions',{
-          method:'POST',
-          headers:{'Content-Type':'application/json','Authorization':`Bearer ${env.GROQ_API_KEY}`},
-          body:JSON.stringify(payload),
-          signal:ctrl.signal
-        });
-      } finally { clearTimeout(timer); }
-      const d=await r.json().catch(()=>({}));
-      if(r.ok){
+        const payload={
+          model,
+          messages,
+          temperature:isImage?0.1:0.15,
+          max_completion_tokens:1200,
+          response_format:{type:'json_object'}
+        };
+        if(model.startsWith('openai/gpt-oss-')) payload.reasoning_effort='low';
+
+        const ctrl=new AbortController();
+        const timer=setTimeout(()=>ctrl.abort(),45000);
+        let r;
+        try{
+          r=await fetch('https://api.groq.com/openai/v1/chat/completions',{
+            method:'POST',
+            headers:{'Content-Type':'application/json','Authorization':`Bearer ${env.GROQ_API_KEY}`},
+            body:JSON.stringify(payload),
+            signal:ctrl.signal
+          });
+        } finally { clearTimeout(timer); }
+
+        const d=await r.json().catch(()=>({}));
+        if(!r.ok){
+          errors.push(`Groq ${model}: ${d?.error?.message||`HTTP ${r.status}`}`);
+          continue;
+        }
         const out=d?.choices?.[0]?.message?.content||'';
         const parsed=extractJson(out);
         if(parsed) return parsed;
-        if(parsed) return parsed;
-        throw new Error('Groq trả về định dạng không hợp lệ.');
+        errors.push(`Groq ${model}: JSON không hợp lệ`);
+      }catch(e){
+        errors.push(`Groq ${model}: ${e?.name==='AbortError'?'timeout':(e?.message||String(e))}`);
       }
-    }catch(e){ /* fallback to OpenRouter */ }
+    }
+  }else{
+    errors.push('Groq: thiếu GROQ_API_KEY');
   }
 
-  // OpenRouter fallback. Never select paid models automatically.
+  // OpenRouter final fallback. It is still allowed to be slow.
   if(env.OPENROUTER_API_KEY){
     try{
       const model=isImage
         ? (env.OPENROUTER_VISION_MODEL||'openrouter/free')
         : (env.OPENROUTER_MODEL||'openrouter/free');
-      const payload={model,messages,temperature:0.15,max_tokens:650};
+      const payload={model,messages,temperature:0.15,max_tokens:1200};
       const ctrl=new AbortController();
       const timer=setTimeout(()=>ctrl.abort(),90000);
       let r;
@@ -110,19 +126,19 @@ async function callChatProvider(env, system, user, image){
         });
       } finally { clearTimeout(timer); }
       const d=await r.json().catch(()=>({}));
-      if(!r.ok) throw new Error(d?.error?.message||`OpenRouter ${r.status}`);
+      if(!r.ok) throw new Error(d?.error?.message||`HTTP ${r.status}`);
       const out=d?.choices?.[0]?.message?.content||'';
       const parsed=extractJson(out);
       if(parsed) return parsed;
-      if(parsed) return parsed;
-      throw new Error('OpenRouter trả về định dạng không hợp lệ.');
+      throw new Error('JSON không hợp lệ');
     }catch(e){
-      if(isImage) throw new Error(e?.message||'AI vision miễn phí không khả dụng');
+      errors.push(`OpenRouter: ${e?.name==='AbortError'?'timeout':(e?.message||String(e))}`);
     }
+  }else{
+    errors.push('OpenRouter: thiếu OPENROUTER_API_KEY');
   }
 
-  if(isImage) throw new Error('Chưa có AI vision miễn phí khả dụng.');
-  throw new Error('AI cloud không trả được kết quả. Groq và OpenRouter free đều không phản hồi trong thời gian cho phép.');
+  throw new Error(`${isImage?'AI vision':'AI cloud'} lỗi provider: ${errors.join(' | ')}`);
 }
 
 function adviceSystem(){
@@ -203,30 +219,16 @@ async function route(request, env){
   const url=new URL(request.url);
   const auth=needAuth(request,env); if(auth) return auth;
   if(request.method==='OPTIONS') return new Response(null,{status:204,headers:corsHeaders(request.headers.get('Origin')||'*')});
-  if(url.pathname==='/api/health' && request.method==='GET') return json({ok:true,db:!!env.DB,ai:!!(env.OPENROUTER_API_KEY||env.GROQ_API_KEY),providers:{groq:!!env.GROQ_API_KEY,openrouter:!!env.OPENROUTER_API_KEY},primary:env.GROQ_API_KEY?'groq':'openrouter',telegram:!!(env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID),models:{text:env.GROQ_MODEL||'llama-3.3-70b-versatile',vision:env.OPENROUTER_VISION_MODEL||'openrouter/free',fallback:env.OPENROUTER_MODEL||'openrouter/free'}});
+  if(url.pathname==='/api/health' && request.method==='GET') return json({ok:true,db:!!env.DB,ai:!!(env.OPENROUTER_API_KEY||env.GROQ_API_KEY),providers:{groq:!!env.GROQ_API_KEY,openrouter:!!env.OPENROUTER_API_KEY},primary:env.GROQ_API_KEY?'groq':'openrouter',telegram:!!(env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID),models:{text:env.GROQ_MODEL||'openai/gpt-oss-120b',vision:env.GROQ_API_KEY?'qwen/qwen3.6-27b':(env.OPENROUTER_VISION_MODEL||'openrouter/free'),fallback:env.OPENROUTER_MODEL||'openrouter/free'}});
   if(url.pathname==='/api/automation/status' && request.method==='GET') return json({enabled:!!env.DB,telegram:!!(env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID),ai:!!(env.OPENROUTER_API_KEY||env.GROQ_API_KEY),crons:['*/5 * * * *','0 22 * * *']});
   if(url.pathname==='/api/data' && request.method==='DELETE'){
     if(!env.DB) return json({ok:false,local:true});
-    const stm=[
-      'DELETE FROM notification_log',
-      'DELETE FROM weather_snapshots',
-      'DELETE FROM observations',
-      'DELETE FROM tasks',
-      'DELETE FROM recommendations',
-      'DELETE FROM inventory',
-      'DELETE FROM plants',
-      'DELETE FROM kv'
-    ].map(sql=>env.DB.prepare(sql));
-    await env.DB.batch(stm);
-    return json({ok:true,cleared:['plants','inventory','recommendations','tasks','observations','weather_snapshots','notification_log','kv']});
+    const stm=['DELETE FROM notification_log','DELETE FROM weather_snapshots','DELETE FROM observations','DELETE FROM tasks','DELETE FROM recommendations','DELETE FROM inventory','DELETE FROM plants','DELETE FROM kv'].map(sql=>env.DB.prepare(sql));
+    await env.DB.batch(stm); return json({ok:true,cleared:['plants','inventory','recommendations','tasks','observations','weather_snapshots','notification_log','kv']});
   }
   if(url.pathname==='/api/data/plans' && request.method==='DELETE'){
     if(!env.DB) return json({ok:false,local:true});
-    await env.DB.batch([
-      env.DB.prepare('DELETE FROM tasks'),
-      env.DB.prepare('DELETE FROM recommendations')
-    ]);
-    return json({ok:true,cleared:['tasks','recommendations']});
+    await env.DB.batch([env.DB.prepare('DELETE FROM tasks'),env.DB.prepare('DELETE FROM recommendations')]); return json({ok:true,cleared:['tasks','recommendations']});
   }
   if(url.pathname==='/api/data' && request.method==='GET') return json(await readAll(env));
   if(url.pathname==='/api/weather' && request.method==='GET'){const lat=Number(url.searchParams.get('lat')),lon=Number(url.searchParams.get('lon')); if(!Number.isFinite(lat)||!Number.isFinite(lon)) return json({error:'Thiếu lat/lon'},400); const w=await fetchWeather(lat,lon); return json(w);}
@@ -235,46 +237,19 @@ async function route(request, env){
   if(url.pathname.startsWith('/api/task-status/') && request.method==='POST'){const tid=decodeURIComponent(url.pathname.split('/').pop()); const b=await request.json().catch(()=>({})); if(!env.DB) return json({ok:false,local:true}); if(b.offsetDays){const row=await env.DB.prepare(`SELECT scheduled_at FROM tasks WHERE id=?`).bind(tid).first(); if(!row?.scheduled_at)return json({error:'Task chưa có thời gian'},400); const next=new Date(new Date(row.scheduled_at).getTime()+Number(b.offsetDays)*86400000).toISOString(); await env.DB.prepare(`UPDATE tasks SET scheduled_at=?,status=? WHERE id=?`).bind(next,b.status||'PLANNED',tid).run();}else{await env.DB.prepare(`UPDATE tasks SET status=?,completed_at=? WHERE id=?`).bind(b.status||'PLANNED',b.status==='DONE'?iso():null,tid).run();} return json({ok:true});}
   if(url.pathname==='/api/recommendations' && request.method==='POST'){const rec=await request.json(); await saveRecommendation(env,rec); return json({ok:true});}
   if(url.pathname.startsWith('/api/plants/') && request.method==='DELETE'){
-    const id=decodeURIComponent(url.pathname.split('/').pop()||'');
-    if(!id) return json({error:'Thiếu plant id'},400);
-    if(!env.DB) return json({ok:false,local:true});
-    await env.DB.batch([
-      env.DB.prepare('DELETE FROM tasks WHERE plant_id=?').bind(id),
-      env.DB.prepare('DELETE FROM recommendations WHERE plant_id=?').bind(id),
-      env.DB.prepare('DELETE FROM observations WHERE plant_id=?').bind(id),
-      env.DB.prepare('DELETE FROM weather_snapshots WHERE plant_id=?').bind(id),
-      env.DB.prepare('DELETE FROM plants WHERE id=?').bind(id)
-    ]);
-    return json({ok:true,deleted:id});
+    const id=decodeURIComponent(url.pathname.split('/').pop()||''); if(!id) return json({error:'Thiếu plant id'},400); if(!env.DB) return json({ok:false,local:true});
+    await env.DB.batch([env.DB.prepare('DELETE FROM tasks WHERE plant_id=?').bind(id),env.DB.prepare('DELETE FROM recommendations WHERE plant_id=?').bind(id),env.DB.prepare('DELETE FROM observations WHERE plant_id=?').bind(id),env.DB.prepare('DELETE FROM weather_snapshots WHERE plant_id=?').bind(id),env.DB.prepare('DELETE FROM plants WHERE id=?').bind(id)]); return json({ok:true,deleted:id});
   }
   if(url.pathname==='/api/plants' && request.method==='POST'){const p=await request.json(); if(!env.DB) return json({ok:false,local:true}); await env.DB.prepare(`INSERT OR REPLACE INTO plants(id,crop,name,count,area,stage,season,lat,lon,last_check_at,last_observation,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(p.id,p.crop,p.name||cropName(p.crop),p.count||0,p.area||0,p.stage||'',p.season||'',p.lat||null,p.lon||null,p.last_check_at||null,p.last_observation||null,p.created_at||iso(),p.updated_at||iso()).run(); return json({ok:true});}
   if(url.pathname.startsWith('/api/inventory/') && request.method==='DELETE'){
-    const id=decodeURIComponent(url.pathname.split('/').pop()||'');
-    if(!id) return json({error:'Thiếu inventory id'},400);
-    if(!env.DB) return json({ok:false,local:true});
-    await env.DB.prepare('DELETE FROM inventory WHERE id=?').bind(id).run();
-    return json({ok:true,deleted:id});
+    const id=decodeURIComponent(url.pathname.split('/').pop()||''); if(!id) return json({error:'Thiếu inventory id'},400); if(!env.DB) return json({ok:false,local:true}); await env.DB.prepare('DELETE FROM inventory WHERE id=?').bind(id).run(); return json({ok:true,deleted:id});
   }
   if(url.pathname==='/api/sync' && request.method==='POST'){const b=await request.json(); if(!env.DB) return json({ok:false,local:true}); const stm=[]; for(const p of b.plants||[]) stm.push(env.DB.prepare(`INSERT OR REPLACE INTO plants(id,crop,name,count,area,stage,season,lat,lon,last_check_at,last_observation,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(p.id,p.crop,p.name||cropName(p.crop),p.count||0,p.area||0,p.stage||'',p.season||'',p.lat||null,p.lon||null,p.last_check_at||null,p.last_observation||null,p.created_at||iso(),p.updated_at||iso())); for(const i of b.inventory||[]) stm.push(env.DB.prepare(`INSERT OR REPLACE INTO inventory(id,name,active,crop,targets,label_verified,dose,phi,stock,unit,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(i.id,i.name||'',i.active||'',i.crop||'',i.targets||'',i.label_verified?1:0,i.dose||'',i.phi||'',i.stock||0,i.unit||'đv',i.created_at||iso())); for(const r of b.recs||[]) stm.push(env.DB.prepare(`INSERT OR REPLACE INTO recommendations(id,plant_id,title,body,payload,status,source,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`).bind(r.id,r.plant_id,r.title||'',r.body||'',r.payload||'',r.status||'PENDING',r.source||'LOCAL',r.created_at||iso(),iso())); for(const t of b.tasks||[]) stm.push(env.DB.prepare(`INSERT OR REPLACE INTO tasks(id,plant_id,rec_id,kind,title,scheduled_at,status,notes,meta,completed_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).bind(t.id,t.plant_id||null,t.rec_id||null,t.kind||'',t.title||'',t.scheduled_at||null,t.status||'PLANNED',t.notes||'',t.meta||'',t.completed_at||null,t.created_at||iso())); await dbBatch(env,stm); return json({ok:true});}
   if(url.pathname==='/api/automation/run' && request.method==='POST'){const h=await runHourly(env); const d=await runDaily(env); return json({ok:true,created:(h.created||0)+(d.created||0),notifications:(h.notifications||0)+(d.notifications||0),status:{enabled:!!env.DB,telegram:!!(env.TELEGRAM_BOT_TOKEN&&env.TELEGRAM_CHAT_ID),ai:!!(env.OPENROUTER_API_KEY||env.GROQ_API_KEY)}});}
-  if(url.pathname.startsWith('/api/recommendations/') && request.method==='DELETE'){
-    const id=decodeURIComponent(url.pathname.split('/').pop()||'');
-    if(!id) return json({error:'Thiếu recommendation id'},400);
-    if(env.DB) await env.DB.prepare('DELETE FROM recommendations WHERE id=?').bind(id).run();
-    return json({ok:true});
-  }
+  if(url.pathname.startsWith('/api/recommendations/') && request.method==='DELETE'){const id=decodeURIComponent(url.pathname.split('/').pop()||''); if(!id) return json({error:'Thiếu recommendation id'},400); if(env.DB) await env.DB.prepare('DELETE FROM recommendations WHERE id=?').bind(id).run(); return json({ok:true});}
   if(url.pathname.startsWith('/api/task-status/') && request.method==='POST'){
-    const id=decodeURIComponent(url.pathname.split('/').pop()||'');
-    const b=await request.json().catch(()=>({}));
-    if(!id) return json({error:'Thiếu task id'},400);
-    if(!env.DB) return json({ok:false,local:true});
-    if(b.offsetDays){
-      await env.DB.prepare('UPDATE tasks SET scheduled_at=?, status=?, completed_at=NULL WHERE id=?')
-        .bind(new Date(Date.now()+Number(b.offsetDays)*86400000).toISOString(), b.status||'PLANNED', id).run();
-    } else {
-      await env.DB.prepare('UPDATE tasks SET status=?, completed_at=? WHERE id=?')
-        .bind(b.status||'PLANNED', b.status==='DONE'?iso():null, id).run();
-    }
+    const id=decodeURIComponent(url.pathname.split('/').pop()||''); const b=await request.json().catch(()=>({})); if(!id) return json({error:'Thiếu task id'},400); if(!env.DB) return json({ok:false,local:true});
+    if(b.offsetDays){await env.DB.prepare('UPDATE tasks SET scheduled_at=?, status=?, completed_at=NULL WHERE id=?').bind(new Date(Date.now()+Number(b.offsetDays)*86400000).toISOString(), b.status||'PLANNED', id).run();} else {await env.DB.prepare('UPDATE tasks SET status=?, completed_at=? WHERE id=?').bind(b.status||'PLANNED', b.status==='DONE'?iso():null, id).run();}
     return json({ok:true});
   }
   if(url.pathname==='/api/notify/test' && request.method==='POST'){const r=await notifyTelegram(env,'🌱 Nông Vụ AI\nTelegram đã kết nối thành công.'); return json(r);}
