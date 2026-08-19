@@ -18,7 +18,6 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
-          import re
 
           p = Path('_worker.js')
           s = p.read_text(encoding='utf-8')
@@ -36,28 +35,17 @@ jobs:
 
   const errors=[];
 
-  // Groq is primary. Llama 3.3 70B was deprecated on 2026-08-16,
-  // so use current fast models instead.
+  // Groq primary. Llama 3.3 70B is retired; use current Groq models.
   if(env.GROQ_API_KEY){
     const models=isImage
       ? [env.GROQ_VISION_MODEL||'qwen/qwen3.6-27b']
-      : [env.GROQ_MODEL||'openai/gpt-oss-120b', 'openai/gpt-oss-20b'];
+      : [env.GROQ_MODEL||'openai/gpt-oss-120b','openai/gpt-oss-20b'];
 
     for(const model of models){
       try{
-        const payload={
-          model,
-          messages,
-          temperature:isImage?0.1:0.15,
-          max_completion_tokens:1200,
-          response_format:{type:'json_object'}
-        };
-        if(model.startsWith('openai/gpt-oss-')){
-          payload.reasoning_effort='low';
-          payload.reasoning_format='hidden';
-        }else if(model.startsWith('qwen/')){
-          payload.reasoning_effort='none';
-        }
+        const payload={model,messages,temperature:isImage?0.1:0.15,max_completion_tokens:1200,response_format:{type:'json_object'}};
+        if(model.startsWith('openai/gpt-oss-')){ payload.reasoning_effort='low'; payload.reasoning_format='hidden'; }
+        else if(model.startsWith('qwen/')) payload.reasoning_effort='none';
 
         const ctrl=new AbortController();
         const timer=setTimeout(()=>ctrl.abort(),45000);
@@ -66,68 +54,41 @@ jobs:
           r=await fetch('https://api.groq.com/openai/v1/chat/completions',{
             method:'POST',
             headers:{'Content-Type':'application/json','Authorization':`Bearer ${env.GROQ_API_KEY}`},
-            body:JSON.stringify(payload),
-            signal:ctrl.signal
+            body:JSON.stringify(payload),signal:ctrl.signal
           });
         } finally { clearTimeout(timer); }
 
         const d=await r.json().catch(()=>({}));
-        if(!r.ok){
-          errors.push(`Groq ${model}: ${d?.error?.message||`HTTP ${r.status}`}`);
-          continue;
-        }
+        if(!r.ok){ errors.push(`Groq ${model}: ${d?.error?.message||`HTTP ${r.status}`}`); continue; }
         const out=d?.choices?.[0]?.message?.content||'';
         const parsed=extractJson(out);
         if(parsed) return parsed;
         errors.push(`Groq ${model}: phản hồi không phải JSON hợp lệ`);
-      }catch(e){
-        errors.push(`Groq ${model}: ${e?.name==='AbortError'?'timeout':(e?.message||String(e))}`);
-      }
+      }catch(e){ errors.push(`Groq ${model}: ${e?.name==='AbortError'?'timeout':(e?.message||String(e))}`); }
     }
-  }else{
-    errors.push('Groq: chưa cấu hình GROQ_API_KEY');
-  }
+  }else errors.push('Groq: chưa cấu hình GROQ_API_KEY');
 
-  // OpenRouter remains the final fallback and never auto-selects a paid model.
+  // OpenRouter final fallback.
   if(env.OPENROUTER_API_KEY){
     try{
-      const model=isImage
-        ? (env.OPENROUTER_VISION_MODEL||'openrouter/free')
-        : (env.OPENROUTER_MODEL||'openrouter/free');
+      const model=isImage?(env.OPENROUTER_VISION_MODEL||'openrouter/free'):(env.OPENROUTER_MODEL||'openrouter/free');
       const payload={model,messages,temperature:0.15,max_tokens:1200};
-      const ctrl=new AbortController();
-      const timer=setTimeout(()=>ctrl.abort(),60000);
+      const ctrl=new AbortController(); const timer=setTimeout(()=>ctrl.abort(),60000);
       let r;
       try{
         r=await fetch('https://openrouter.ai/api/v1/chat/completions',{
-          method:'POST',
-          headers:{
-            'Content-Type':'application/json',
-            'Authorization':`Bearer ${env.OPENROUTER_API_KEY}`,
-            'HTTP-Referer':env.APP_BASE_URL||'https://nhokk63.github.io/nong-vu-ai/',
-            'X-Title':'Nong Vu AI'
-          },
-          body:JSON.stringify(payload),
-          signal:ctrl.signal
+          method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${env.OPENROUTER_API_KEY}`,'HTTP-Referer':env.APP_BASE_URL||'https://nhokk63.github.io/nong-vu-ai/','X-Title':'Nong Vu AI'},
+          body:JSON.stringify(payload),signal:ctrl.signal
         });
       } finally { clearTimeout(timer); }
       const d=await r.json().catch(()=>({}));
       if(!r.ok) throw new Error(d?.error?.message||`HTTP ${r.status}`);
-      const out=d?.choices?.[0]?.message?.content||'';
-      const parsed=extractJson(out);
-      if(parsed) return parsed;
-      throw new Error('phản hồi không phải JSON hợp lệ');
-    }catch(e){
-      errors.push(`OpenRouter: ${e?.name==='AbortError'?'timeout':(e?.message||String(e))}`);
-    }
-  }else{
-    errors.push('OpenRouter: chưa cấu hình OPENROUTER_API_KEY');
-  }
+      const out=d?.choices?.[0]?.message?.content||''; const parsed=extractJson(out);
+      if(parsed) return parsed; throw new Error('phản hồi không phải JSON hợp lệ');
+    }catch(e){ errors.push(`OpenRouter: ${e?.name==='AbortError'?'timeout':(e?.message||String(e))}`); }
+  }else errors.push('OpenRouter: chưa cấu hình OPENROUTER_API_KEY');
 
-  if(isImage){
-    throw new Error(`AI vision không phản hồi. ${errors.join(' | ')}`);
-  }
-  throw new Error(`AI cloud không phản hồi. ${errors.join(' | ')}`);
+  throw new Error(`${isImage?'AI vision':'AI cloud'} không phản hồi. ${errors.join(' | ')}`);
 }'''
 
           s = s[:start] + new_fn + s[end:]
@@ -144,11 +105,9 @@ jobs:
           idx = Path('index.html')
           if idx.exists():
             ix = idx.read_text(encoding='utf-8')
-            ix = ix.replace('app.js?v=21', 'app.js?v=22')
-            ix = ix.replace('styles.css?v=21', 'styles.css?v=22')
-            ix = ix.replace('app.js?v=20', 'app.js?v=22')
-            ix = ix.replace('styles.css?v=20', 'styles.css?v=22')
-            if 'modal-fix.js?v=22' not in ix:
+            ix = ix.replace('app.js?v=21', 'app.js?v=22').replace('styles.css?v=21', 'styles.css?v=22')
+            ix = ix.replace('app.js?v=20', 'app.js?v=22').replace('styles.css?v=20', 'styles.css?v=22')
+            if 'modal-fix.js?v=21' not in ix and 'app.js?v=22' in ix:
               ix = ix.replace('<script src="./app.js?v=22" type="module"></script>', '<script src="./modal-fix.js?v=21"></script>\n<script src="./app.js?v=22" type="module"></script>')
             idx.write_text(ix, encoding='utf-8')
 
@@ -159,11 +118,10 @@ jobs:
             ss = ss.replace('app.js?v=21','app.js?v=22').replace('styles.css?v=21','styles.css?v=22')
             sw.write_text(ss, encoding='utf-8')
 
-      - name: Commit fix and remove one-time workflow
+      - name: Commit fix
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add _worker.js wrangler.toml index.html sw.js
-          git rm -f .github/workflows/fix-groq-v22.yml
-          git commit -m "fix: migrate from deprecated Groq Llama and improve AI fallbacks" || exit 0
+          git commit -m "fix: migrate from retired Groq Llama and improve AI fallback" || exit 0
           git push origin HEAD:main
