@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-title" content="Nông Vụ AI">
 <link rel="apple-touch-icon" href="./icon-180.png">
 <link rel="manifest" href="./manifest.json">
-<link rel="stylesheet" href="./styles.css?v=41">
+<link rel="stylesheet" href="./styles.css?v=42">
 <title>Nông Vụ AI</title>
 </head>
 <body>
@@ -19,37 +19,54 @@
   'use strict';
   const app=()=>document.getElementById('app');
   const isBoot=()=>!!document.querySelector('#app .boot');
+  const originalFetch=window.fetch.bind(window);
+  const sw=navigator.serviceWorker;
+  const originalRegister=sw?.register?.bind(sw);
+  let restored=false;
   function esc(s){return String(s??'').replace(/[&<>\"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[m]))}
   function showError(msg){
     const a=app(); if(!a||!isBoot()) return;
     a.innerHTML=`<div style="min-height:100vh;display:grid;place-items:center;padding:24px;background:#f5f7fb;font-family:system-ui,-apple-system,sans-serif"><div style="width:min(520px,100%);background:#fff;border:1px solid #e3e5ea;border-radius:22px;padding:24px;box-shadow:0 12px 40px rgba(0,0,0,.08)"><div style="font-size:28px;font-weight:900">Nông Vụ AI</div><div style="margin-top:8px;color:#b42318;font-weight:800">Không thể khởi động ứng dụng</div><div style="margin-top:8px;color:#666;font-size:13px;line-height:1.5;word-break:break-word">${esc(msg||'Lỗi JavaScript')}</div><button id="boot-reload" style="margin-top:16px;border:0;border-radius:14px;padding:12px 16px;background:#147b50;color:#fff;font-weight:800">Tải lại sạch</button></div></div>`;
     document.getElementById('boot-reload')?.addEventListener('click',()=>location.href=location.pathname+'?clean='+Date.now()+location.hash);
   }
+  function restore(){
+    if(restored)return;
+    if(isBoot())return;
+    restored=true;
+    window.fetch=originalFetch;
+    if(sw&&originalRegister) sw.register=originalRegister;
+    if(originalRegister)setTimeout(()=>originalRegister('./sw.js',{scope:new URL('./',document.baseURI).pathname}).catch(()=>{}),1200);
+  }
+  window.fetch=(input,init={})=>{
+    if(!isBoot()){restore();return originalFetch(input,init)}
+    const url=typeof input==='string'?input:(input?.url||'');
+    if(url.includes('/api/')){
+      const controller=new AbortController();
+      const ext=init?.signal;
+      let timer;
+      const abort=()=>controller.abort(ext?.reason);
+      if(ext?.aborted)controller.abort(ext.reason);else ext?.addEventListener?.('abort',abort,{once:true});
+      timer=setTimeout(()=>controller.abort(new DOMException('Startup API skipped','AbortError')),650);
+      return originalFetch(input,{...init,signal:controller.signal}).finally(()=>{clearTimeout(timer);ext?.removeEventListener?.('abort',abort)});
+    }
+    return originalFetch(input,init);
+  };
+  if(sw&&originalRegister){
+    sw.register=(...args)=>isBoot()?Promise.resolve({}):originalRegister(...args);
+  }
+  try{
+    sw?.getRegistrations?.().then(rs=>Promise.all(rs.map(r=>r.unregister()))).catch(()=>{});
+    window.caches?.keys?.().then(keys=>Promise.all(keys.map(k=>caches.delete(k)))).catch(()=>{});
+  }catch{}
   window.addEventListener('error',e=>{if(isBoot())showError(e.error?.message||e.message||'JavaScript error')});
   window.addEventListener('unhandledrejection',e=>{if(isBoot())showError(e.reason?.message||String(e.reason||'Promise rejection'))});
-  try{
-    if('serviceWorker' in navigator){
-      navigator.serviceWorker.getRegistrations().then(rs=>Promise.all(rs.map(r=>r.unregister()))).catch(()=>{});
-    }
-    if(window.caches?.keys){ caches.keys().then(keys=>Promise.all(keys.map(k=>caches.delete(k)))).catch(()=>{}); }
-  }catch{}
-  const rawFetch=window.fetch.bind(window);
-  window.fetch=(input,init={})=>{
-    if(!isBoot()) return rawFetch(input,init);
-    const controller=new AbortController();
-    const ext=init?.signal;
-    let timer;
-    const abort=()=>controller.abort(ext?.reason);
-    if(ext?.aborted) controller.abort(ext.reason); else ext?.addEventListener?.('abort',abort,{once:true});
-    timer=setTimeout(()=>controller.abort(new DOMException('Startup request timeout','TimeoutError')),5000);
-    return rawFetch(input,{...init,signal:controller.signal}).finally(()=>{clearTimeout(timer);ext?.removeEventListener?.('abort',abort)});
-  };
-  setTimeout(()=>{if(isBoot())showError('Ứng dụng không hoàn tất khởi động sau 18 giây.')},18000);
+  setTimeout(()=>{if(isBoot())showError('Ứng dụng chưa hoàn tất khởi động.');},8000);
+  setInterval(restore,250);
 })();
 </script>
-<script src="./app.js?v=41"></script>
-<script src="./modal-fix.js?v=41" defer></script>
-<script src="./needs-tab.js?v=41" defer></script>
-<script src="./needs-bridge.js?v=41" defer></script>
+<script src="./app.js?v=42"></script>
+<script src="./modal-fix.js?v=42" defer></script>
+<script src="./needs-tab.js?v=42" defer></script>
+<script src="./needs-bridge.js?v=42" defer></script>
 </body>
 </html>
